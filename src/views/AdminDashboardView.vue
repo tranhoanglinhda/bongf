@@ -272,7 +272,7 @@ const formatGiftDate = (dateText: string): string =>
 
 const signOut = () => {
   logoutAdmin();
-  router.push('/admin');
+  router.push('/admin4869');
 };
 
 onUnmounted(() => {

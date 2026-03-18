@@ -16,9 +16,9 @@ const router = createRouter({
     { path: '/blog/:idpost', name: 'post-detail', component: PostDetailView },
     { path: '/shop', name: 'shop', component: ShopView },
     { path: '/gift', name: 'gift', component: GiftView },
-    { path: '/admin', name: 'admin-login', component: AdminLoginView },
+    { path: '/admin4869', name: 'admin-login', component: AdminLoginView },
     {
-      path: '/admin/dashboard',
+      path: '/admin4869/dashboard',
       name: 'admin-dashboard',
       component: AdminDashboardView,
       meta: { requiresAdmin: true },

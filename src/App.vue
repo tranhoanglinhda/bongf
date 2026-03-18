@@ -5,7 +5,7 @@ import SiteHeader from './components/SiteHeader.vue';
 import SiteFooter from './components/SiteFooter.vue';
 
 const route = useRoute();
-const isAdminRoute = computed(() => route.path.startsWith('/admin'));
+const isAdminRoute = computed(() => route.path.startsWith('/admin4869'));
 </script>
 
 <template>

@@ -11,7 +11,7 @@ const error = ref('');
 const submitLogin = () => {
   error.value = '';
   if (loginAdmin(email.value, password.value)) {
-    router.push('/admin/dashboard');
+    router.push('/admin4869/dashboard');
     return;
   }
   error.value = 'Invalid email or password.';
