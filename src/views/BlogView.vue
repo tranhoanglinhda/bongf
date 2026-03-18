@@ -5,11 +5,19 @@ import type { PostItem } from '../types/models';
 
 const posts = ref<PostItem[]>([]);
 const loading = ref(true);
+const error = ref('');
 
 const loadPosts = async () => {
   loading.value = true;
-  posts.value = await listPosts();
-  loading.value = false;
+  error.value = '';
+
+  try {
+    posts.value = await listPosts();
+  } catch {
+    error.value = 'Failed to load posts. Please refresh and try again.';
+  } finally {
+    loading.value = false;
+  }
 };
 
 onMounted(loadPosts);
@@ -23,6 +31,7 @@ onMounted(loadPosts);
   </section>
 
   <section v-if="loading" class="state-box">Loading posts...</section>
+  <section v-else-if="error" class="state-box">{{ error }}</section>
   <section v-else-if="posts.length === 0" class="state-box">No posts yet. Add one from the Admin Dashboard.</section>
 
   <section v-else class="post-grid">

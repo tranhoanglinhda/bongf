@@ -21,10 +21,12 @@ const STORAGE_KEYS = {
   gifts: 'bongf_gifts',
 } as const;
 
-const FIRESTORE_LIST_TIMEOUT_MS = 3000;
-const FIRESTORE_DOC_TIMEOUT_MS = 4000;
+const FIRESTORE_LIST_TIMEOUT_MS = 10_000;
+const FIRESTORE_DOC_TIMEOUT_MS = 10_000;
 const FIRESTORE_WRITE_TIMEOUT_MS = 5000;
 const LIST_CACHE_TTL_MS = 60_000;
+const FIRESTORE_READ_RETRIES = 1;
+const FIRESTORE_RETRY_DELAY_MS = 400;
 
 const envListLimit = Number(import.meta.env.VITE_FIRESTORE_LIST_LIMIT ?? '50');
 const FIRESTORE_LIST_LIMIT = Number.isFinite(envListLimit) && envListLimit > 0 ? Math.floor(envListLimit) : 50;
@@ -57,7 +59,7 @@ const invalidateGiftCache = (): void => {
 
 const withTimeout = <T>(promise: Promise<T>, ms: number): Promise<T> =>
   new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('Firestore request timeout.')), ms);
+    const timer = setTimeout(() => reject(new Error(`Firestore request timeout after ${ms}ms.`)), ms);
 
     promise
       .then((result) => {
@@ -69,6 +71,25 @@ const withTimeout = <T>(promise: Promise<T>, ms: number): Promise<T> =>
         reject(error);
       });
   });
+
+const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+const isTimeoutError = (error: unknown): boolean =>
+  error instanceof Error && /timeout/i.test(error.message);
+
+const withRetryOnTimeout = async <T>(run: () => Promise<T>, retries = FIRESTORE_READ_RETRIES): Promise<T> => {
+  let attemptsLeft = retries;
+
+  while (true) {
+    try {
+      return await run();
+    } catch (error) {
+      if (!isTimeoutError(error) || attemptsLeft <= 0) throw error;
+      attemptsLeft -= 1;
+      await wait(FIRESTORE_RETRY_DELAY_MS);
+    }
+  }
+};
 
 const toIsoDate = (value: unknown): string => {
   if (typeof value === 'string') return value;
@@ -151,7 +172,7 @@ export const listPosts = async (): Promise<PostItem[]> => {
 
   try {
     const q = query(collection(db, 'posts'), orderBy('createdAt', 'desc'), limit(FIRESTORE_LIST_LIMIT));
-    const snapshot = await withTimeout(getDocs(q), FIRESTORE_LIST_TIMEOUT_MS);
+    const snapshot = await withRetryOnTimeout(() => withTimeout(getDocs(q), FIRESTORE_LIST_TIMEOUT_MS));
     const data = snapshot.docs.map(mapPostDoc);
     postListCache.data = data;
     postListCache.timestamp = Date.now();
@@ -167,8 +188,12 @@ export const getPostById = async (id: string): Promise<PostItem | null> => {
     return getLocalList<PostItem>(STORAGE_KEYS.posts).find((item) => item.id === id) ?? null;
   }
 
+  const firestore = db;
+
   try {
-    const snapshot = await withTimeout(getDoc(doc(db, 'posts', id)), FIRESTORE_DOC_TIMEOUT_MS);
+    const snapshot = await withRetryOnTimeout(() =>
+      withTimeout(getDoc(doc(firestore, 'posts', id)), FIRESTORE_DOC_TIMEOUT_MS),
+    );
     if (!snapshot.exists()) return null;
     const data = snapshot.data() as { title: string; image: string; description: string; createdAt?: unknown };
     return {
@@ -256,7 +281,7 @@ export const listProducts = async (): Promise<ProductItem[]> => {
   if (db) {
     try {
       const q = query(collection(db, 'products'), orderBy('createdAt', 'desc'), limit(FIRESTORE_LIST_LIMIT));
-      const snapshot = await withTimeout(getDocs(q), FIRESTORE_LIST_TIMEOUT_MS);
+      const snapshot = await withRetryOnTimeout(() => withTimeout(getDocs(q), FIRESTORE_LIST_TIMEOUT_MS));
       const data = snapshot.docs.map(mapProductDoc);
       productListCache.data = data;
       productListCache.timestamp = Date.now();
@@ -368,7 +393,7 @@ export const listGiftEmails = async (): Promise<GiftItem[]> => {
   if (db) {
     try {
       const q = query(collection(db, 'gifts'), orderBy('createdAt', 'desc'), limit(FIRESTORE_LIST_LIMIT));
-      const snapshot = await withTimeout(getDocs(q), FIRESTORE_LIST_TIMEOUT_MS);
+      const snapshot = await withRetryOnTimeout(() => withTimeout(getDocs(q), FIRESTORE_LIST_TIMEOUT_MS));
       const data = snapshot.docs.map(mapGiftDoc);
       giftListCache.data = data;
       giftListCache.timestamp = Date.now();

@@ -5,6 +5,7 @@ import type { ProductItem } from '../types/models';
 
 const products = ref<ProductItem[]>([]);
 const loading = ref(true);
+const error = ref('');
 const active = ref<'all' | 'amazon' | 'shopee'>('all');
 
 const filteredProducts = computed(() => {
@@ -14,8 +15,15 @@ const filteredProducts = computed(() => {
 
 const loadProducts = async () => {
   loading.value = true;
-  products.value = await listProducts();
-  loading.value = false;
+  error.value = '';
+
+  try {
+    products.value = await listProducts();
+  } catch {
+    error.value = 'Failed to load products. Please refresh and try again.';
+  } finally {
+    loading.value = false;
+  }
 };
 
 onMounted(loadProducts);
@@ -35,6 +43,7 @@ onMounted(loadProducts);
   </div>
 
   <section v-if="loading" class="state-box">Loading products...</section>
+  <section v-else-if="error" class="state-box">{{ error }}</section>
   <section v-else-if="filteredProducts.length === 0" class="state-box">No products available in this category.</section>
 
   <section v-else class="product-grid">
