@@ -1,9 +1,4 @@
 <script setup lang="ts">
-import { computed } from 'vue';
-import { useRoute } from 'vue-router';
-
-const route = useRoute();
-const isHome = computed(() => route.path === '/');
 </script>
 
 <template>
@@ -26,7 +21,7 @@ const isHome = computed(() => route.path === '/');
       <p>© 2026 BongF. All rights reserved.</p>
     </div>
 
-    <div v-if="isHome" class="footer-contact" id="home-contact">
+    <div class="footer-contact" id="home-contact">
       <p class="footer-contact-title">Contact</p>
       <div class="footer-contact-links">
         <a href="https://instagram.com" target="_blank" rel="noopener noreferrer" aria-label="Instagram">

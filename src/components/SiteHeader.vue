@@ -9,22 +9,17 @@ const mobileMenuOpen = ref(false);
 interface NavLink {
   label: string;
   to: RouteLocationRaw;
-  matcher: (path: string, hash: string) => boolean;
+  matcher: (path: string) => boolean;
 }
 
 const links: NavLink[] = [
   { label: 'Home', to: '/', matcher: (path) => path === '/' },
-  {
-    label: 'Contact',
-    to: { path: '/', hash: '#home-contact' },
-    matcher: (path, hash) => path === '/' && hash === '#home-contact',
-  },
   { label: 'Blog', to: '/blog', matcher: (path) => path.startsWith('/blog') },
   { label: 'Shop', to: '/shop', matcher: (path) => path.startsWith('/shop') },
   { label: 'Gift', to: '/gift', matcher: (path) => path.startsWith('/gift') },
 ];
 
-const isActive = (link: NavLink): boolean => link.matcher(route.path, route.hash);
+const isActive = (link: NavLink): boolean => link.matcher(route.path);
 
 const isAdmin = computed(() => route.path.startsWith('/admin4869'));
 
