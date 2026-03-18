@@ -20,6 +20,25 @@ const STORAGE_KEYS = {
   gifts: 'bongf_gifts',
 } as const;
 
+const FIRESTORE_LIST_TIMEOUT_MS = 3000;
+const FIRESTORE_DOC_TIMEOUT_MS = 4000;
+const FIRESTORE_WRITE_TIMEOUT_MS = 5000;
+
+const withTimeout = <T>(promise: Promise<T>, ms: number): Promise<T> =>
+  new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('Firestore request timeout.')), ms);
+
+    promise
+      .then((result) => {
+        clearTimeout(timer);
+        resolve(result);
+      })
+      .catch((error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
+  });
+
 const toIsoDate = (value: unknown): string => {
   if (typeof value === 'string') return value;
   if (value && typeof value === 'object' && 'toDate' in value) {
@@ -59,6 +78,16 @@ const mapProductDoc = (item: QueryDocumentSnapshot): ProductItem => {
   };
 };
 
+const mapGiftDoc = (item: QueryDocumentSnapshot): GiftItem => {
+  const data = item.data() as { email: string; createdAt?: unknown };
+
+  return {
+    id: item.id,
+    email: data.email,
+    createdAt: toIsoDate(data.createdAt),
+  };
+};
+
 const getLocalList = <T>(key: string): T[] => {
   const raw = localStorage.getItem(key);
   if (!raw) return [];
@@ -79,9 +108,13 @@ const sortByDateDesc = <T extends { createdAt: string }>(items: T[]): T[] =>
 
 export const listPosts = async (): Promise<PostItem[]> => {
   if (db) {
-    const q = query(collection(db, 'posts'), orderBy('createdAt', 'desc'));
-    const snapshot = await getDocs(q);
-    return snapshot.docs.map(mapPostDoc);
+    try {
+      const q = query(collection(db, 'posts'), orderBy('createdAt', 'desc'));
+      const snapshot = await withTimeout(getDocs(q), FIRESTORE_LIST_TIMEOUT_MS);
+      return snapshot.docs.map(mapPostDoc);
+    } catch (error) {
+      console.warn('Failed to list posts from Firestore, using localStorage fallback.', error);
+    }
   }
 
   return sortByDateDesc(getLocalList<PostItem>(STORAGE_KEYS.posts));
@@ -89,16 +122,20 @@ export const listPosts = async (): Promise<PostItem[]> => {
 
 export const getPostById = async (id: string): Promise<PostItem | null> => {
   if (db) {
-    const snapshot = await getDoc(doc(db, 'posts', id));
-    if (!snapshot.exists()) return null;
-    const data = snapshot.data() as { title: string; image: string; description: string; createdAt?: unknown };
-    return {
-      id: snapshot.id,
-      title: data.title,
-      image: data.image,
-      description: data.description,
-      createdAt: toIsoDate(data.createdAt),
-    };
+    try {
+      const snapshot = await withTimeout(getDoc(doc(db, 'posts', id)), FIRESTORE_DOC_TIMEOUT_MS);
+      if (!snapshot.exists()) return null;
+      const data = snapshot.data() as { title: string; image: string; description: string; createdAt?: unknown };
+      return {
+        id: snapshot.id,
+        title: data.title,
+        image: data.image,
+        description: data.description,
+        createdAt: toIsoDate(data.createdAt),
+      };
+    } catch (error) {
+      console.warn('Failed to load post by id from Firestore, using localStorage fallback.', error);
+    }
   }
 
   return getLocalList<PostItem>(STORAGE_KEYS.posts).find((item) => item.id === id) ?? null;
@@ -106,11 +143,18 @@ export const getPostById = async (id: string): Promise<PostItem | null> => {
 
 export const createPost = async (payload: PostInput): Promise<void> => {
   if (db) {
-    await addDoc(collection(db, 'posts'), {
-      ...payload,
-      createdAt: serverTimestamp(),
-    });
-    return;
+    try {
+      await withTimeout(
+        addDoc(collection(db, 'posts'), {
+          ...payload,
+          createdAt: serverTimestamp(),
+        }),
+        FIRESTORE_WRITE_TIMEOUT_MS,
+      );
+      return;
+    } catch (error) {
+      console.warn('Failed to create post in Firestore, saving to localStorage fallback.', error);
+    }
   }
 
   const posts = getLocalList<PostItem>(STORAGE_KEYS.posts);
@@ -124,8 +168,12 @@ export const createPost = async (payload: PostInput): Promise<void> => {
 
 export const updatePostItem = async (id: string, payload: PostInput): Promise<void> => {
   if (db) {
-    await updateDoc(doc(db, 'posts', id), { ...payload });
-    return;
+    try {
+      await withTimeout(updateDoc(doc(db, 'posts', id), { ...payload }), FIRESTORE_WRITE_TIMEOUT_MS);
+      return;
+    } catch (error) {
+      console.warn('Failed to update post in Firestore, updating localStorage fallback.', error);
+    }
   }
 
   const posts = getLocalList<PostItem>(STORAGE_KEYS.posts).map((item) =>
@@ -136,8 +184,12 @@ export const updatePostItem = async (id: string, payload: PostInput): Promise<vo
 
 export const deletePostItem = async (id: string): Promise<void> => {
   if (db) {
-    await deleteDoc(doc(db, 'posts', id));
-    return;
+    try {
+      await withTimeout(deleteDoc(doc(db, 'posts', id)), FIRESTORE_WRITE_TIMEOUT_MS);
+      return;
+    } catch (error) {
+      console.warn('Failed to delete post in Firestore, deleting from localStorage fallback.', error);
+    }
   }
 
   const posts = getLocalList<PostItem>(STORAGE_KEYS.posts).filter((item) => item.id !== id);
@@ -146,9 +198,13 @@ export const deletePostItem = async (id: string): Promise<void> => {
 
 export const listProducts = async (): Promise<ProductItem[]> => {
   if (db) {
-    const q = query(collection(db, 'products'), orderBy('createdAt', 'desc'));
-    const snapshot = await getDocs(q);
-    return snapshot.docs.map(mapProductDoc);
+    try {
+      const q = query(collection(db, 'products'), orderBy('createdAt', 'desc'));
+      const snapshot = await withTimeout(getDocs(q), FIRESTORE_LIST_TIMEOUT_MS);
+      return snapshot.docs.map(mapProductDoc);
+    } catch (error) {
+      console.warn('Failed to list products from Firestore, using localStorage fallback.', error);
+    }
   }
 
   return sortByDateDesc(getLocalList<ProductItem>(STORAGE_KEYS.products));
@@ -156,11 +212,18 @@ export const listProducts = async (): Promise<ProductItem[]> => {
 
 export const createProduct = async (payload: ProductInput): Promise<void> => {
   if (db) {
-    await addDoc(collection(db, 'products'), {
-      ...payload,
-      createdAt: serverTimestamp(),
-    });
-    return;
+    try {
+      await withTimeout(
+        addDoc(collection(db, 'products'), {
+          ...payload,
+          createdAt: serverTimestamp(),
+        }),
+        FIRESTORE_WRITE_TIMEOUT_MS,
+      );
+      return;
+    } catch (error) {
+      console.warn('Failed to create product in Firestore, saving to localStorage fallback.', error);
+    }
   }
 
   const products = getLocalList<ProductItem>(STORAGE_KEYS.products);
@@ -174,8 +237,12 @@ export const createProduct = async (payload: ProductInput): Promise<void> => {
 
 export const updateProductItem = async (id: string, payload: ProductInput): Promise<void> => {
   if (db) {
-    await updateDoc(doc(db, 'products', id), { ...payload });
-    return;
+    try {
+      await withTimeout(updateDoc(doc(db, 'products', id), { ...payload }), FIRESTORE_WRITE_TIMEOUT_MS);
+      return;
+    } catch (error) {
+      console.warn('Failed to update product in Firestore, updating localStorage fallback.', error);
+    }
   }
 
   const products = getLocalList<ProductItem>(STORAGE_KEYS.products).map((item) =>
@@ -186,8 +253,12 @@ export const updateProductItem = async (id: string, payload: ProductInput): Prom
 
 export const deleteProductItem = async (id: string): Promise<void> => {
   if (db) {
-    await deleteDoc(doc(db, 'products', id));
-    return;
+    try {
+      await withTimeout(deleteDoc(doc(db, 'products', id)), FIRESTORE_WRITE_TIMEOUT_MS);
+      return;
+    } catch (error) {
+      console.warn('Failed to delete product in Firestore, deleting from localStorage fallback.', error);
+    }
   }
 
   const products = getLocalList<ProductItem>(STORAGE_KEYS.products).filter((item) => item.id !== id);
@@ -196,11 +267,18 @@ export const deleteProductItem = async (id: string): Promise<void> => {
 
 export const createGiftEmail = async (email: string): Promise<void> => {
   if (db) {
-    await addDoc(collection(db, 'gifts'), {
-      email,
-      createdAt: serverTimestamp(),
-    });
-    return;
+    try {
+      await withTimeout(
+        addDoc(collection(db, 'gifts'), {
+          email,
+          createdAt: serverTimestamp(),
+        }),
+        FIRESTORE_WRITE_TIMEOUT_MS,
+      );
+      return;
+    } catch (error) {
+      console.warn('Failed to create gift email in Firestore, saving to localStorage fallback.', error);
+    }
   }
 
   const gifts = getLocalList<GiftItem>(STORAGE_KEYS.gifts);
@@ -209,6 +287,34 @@ export const createGiftEmail = async (email: string): Promise<void> => {
     email,
     createdAt: new Date().toISOString(),
   });
+  setLocalList(STORAGE_KEYS.gifts, gifts);
+};
+
+export const listGiftEmails = async (): Promise<GiftItem[]> => {
+  if (db) {
+    try {
+      const q = query(collection(db, 'gifts'), orderBy('createdAt', 'desc'));
+      const snapshot = await withTimeout(getDocs(q), FIRESTORE_LIST_TIMEOUT_MS);
+      return snapshot.docs.map(mapGiftDoc);
+    } catch (error) {
+      console.warn('Failed to list gift emails from Firestore, using localStorage fallback.', error);
+    }
+  }
+
+  return sortByDateDesc(getLocalList<GiftItem>(STORAGE_KEYS.gifts));
+};
+
+export const deleteGiftEmail = async (id: string): Promise<void> => {
+  if (db) {
+    try {
+      await withTimeout(deleteDoc(doc(db, 'gifts', id)), FIRESTORE_WRITE_TIMEOUT_MS);
+      return;
+    } catch (error) {
+      console.warn('Failed to delete gift email in Firestore, deleting from localStorage fallback.', error);
+    }
+  }
+
+  const gifts = getLocalList<GiftItem>(STORAGE_KEYS.gifts).filter((item) => item.id !== id);
   setLocalList(STORAGE_KEYS.gifts, gifts);
 };
 

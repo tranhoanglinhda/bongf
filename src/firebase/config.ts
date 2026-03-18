@@ -1,5 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { getFirestore, type Firestore } from 'firebase/firestore';
+import { getStorage, type FirebaseStorage } from 'firebase/storage';
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -13,12 +14,14 @@ const firebaseConfig = {
 export const hasFirebaseConfig = Object.values(firebaseConfig).every(Boolean);
 
 let db: Firestore | null = null;
+let storage: FirebaseStorage | null = null;
 
 if (hasFirebaseConfig) {
   const app = initializeApp(firebaseConfig);
   db = getFirestore(app);
+  storage = getStorage(app);
 } else {
   console.warn('Firebase config is missing. Falling back to localStorage mode.');
 }
 
-export { db };
+export { db, storage };

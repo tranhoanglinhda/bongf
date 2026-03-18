@@ -25,6 +25,7 @@ body {
   margin: 0;
   color: var(--ink);
   font-family: 'Plus Jakarta Sans', 'Trebuchet MS', sans-serif;
+  overflow-x: hidden;
   background:
     radial-gradient(circle at 12% 15%, rgba(51, 255, 204, 0.22), transparent 42%),
     radial-gradient(circle at 85% 76%, rgba(51, 255, 204, 0.18), transparent 37%),
@@ -127,6 +128,7 @@ p {
   padding: 22px 24px;
   color: var(--muted);
   font-size: 15px;
+  gap: 12px;
 }
 
 .hero {
@@ -257,6 +259,10 @@ p {
   letter-spacing: -0.04em;
 }
 
+.admin-login-box h1 {
+  font-size: clamp(36px, 7vw, 58px);
+}
+
 .page-head .lead,
 .gift-wrap .lead,
 .admin-login-box .lead {
@@ -347,6 +353,11 @@ p {
   gap: 14px;
 }
 
+.admin-login-box {
+  width: min(100%, 560px);
+  padding: 24px;
+}
+
 .gift-form,
 .admin-form {
   display: grid;
@@ -356,6 +367,11 @@ p {
 
 .admin-form {
   text-align: left;
+}
+
+.admin-form label {
+  display: grid;
+  gap: 8px;
 }
 
 input,
@@ -407,6 +423,25 @@ select:focus {
   margin: 0 auto;
 }
 
+.admin-navbar {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(248, 248, 245, 0.94);
+  padding: 12px 14px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.admin-navbar-links {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .admin-top {
   display: flex;
   justify-content: space-between;
@@ -428,9 +463,40 @@ select:focus {
   padding: 16px;
 }
 
+.media-picker {
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  padding: 10px;
+  display: grid;
+  gap: 10px;
+}
+
+.picker-label {
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.picker-tabs {
+  margin: 0;
+}
+
+.upload-preview {
+  width: 100%;
+  max-height: 170px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+}
+
 .panel h2 {
   margin-bottom: 12px;
   font-size: 32px;
+}
+
+.gifts-panel p {
+  color: var(--muted);
+  line-height: 1.6;
 }
 
 .list-wrap {
@@ -467,6 +533,18 @@ select:focus {
   gap: 8px;
 }
 
+.gift-row {
+  grid-template-columns: 1fr auto;
+}
+
+.gift-body p {
+  font-size: 14px;
+}
+
+.gift-actions {
+  align-self: center;
+}
+
 @keyframes drift {
   0%,
   100% {
@@ -479,6 +557,10 @@ select:focus {
 }
 
 @media (max-width: 860px) {
+  .shell {
+    border-inline: none;
+  }
+
   .page-wrap {
     padding: 14px;
   }
@@ -496,16 +578,195 @@ select:focus {
     flex-wrap: wrap;
   }
 
+  .hero {
+    min-height: 58vh;
+  }
+
+  .hero-content {
+    padding: 78px 18px 56px;
+  }
+
+  .hero h1 {
+    font-size: clamp(34px, 10vw, 56px);
+    line-height: 1.02;
+  }
+
+  .lead {
+    font-size: 17px;
+  }
+
+  .tabs {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    padding-bottom: 4px;
+    scrollbar-width: thin;
+  }
+
+  .tab {
+    white-space: nowrap;
+    flex: 0 0 auto;
+  }
+
   .admin-grid {
     grid-template-columns: 1fr;
+  }
+
+  .admin-navbar {
+    flex-wrap: wrap;
+  }
+
+  .admin-top {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .admin-top h1 {
+    font-size: clamp(30px, 8vw, 48px);
+  }
+
+  .row-card {
+    grid-template-columns: 88px 1fr;
+    align-items: start;
+  }
+
+  .gift-row {
+    grid-template-columns: 1fr;
+  }
+
+  .row-actions {
+    grid-column: span 2;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .gift-actions {
+    grid-column: auto;
+    grid-template-columns: 1fr;
+  }
+
+  .thumb {
+    width: 88px;
+    height: 88px;
+  }
+}
+
+@media (max-width: 640px) {
+  .site-header {
+    position: static;
+  }
+
+  .title {
+    font-size: 28px;
+  }
+
+  .menu {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .menu-link {
+    font-size: 14px;
+  }
+
+  .cta-row {
+    width: 100%;
+  }
+
+  .cta-row .btn {
+    width: 100%;
+    text-align: center;
+  }
+
+  .page-head h1,
+  .gift-wrap h1,
+  .detail-wrap h1,
+  .admin-login-box h1 {
+    font-size: clamp(32px, 11vw, 46px);
+  }
+
+  .home-cards,
+  .post-grid,
+  .product-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .cover {
+    height: 220px;
+  }
+
+  .gift-wrap,
+  .admin-login-page {
+    min-height: auto;
+    padding-top: 8px;
+  }
+
+  .gift-wrap,
+  .admin-login-box,
+  .detail-wrap,
+  .state-box,
+  .home-card {
+    padding: 18px;
+  }
+
+  .gift-form .btn,
+  .admin-form .btn,
+  .action-row .btn {
+    width: 100%;
+  }
+
+  .action-row {
+    width: 100%;
+  }
+
+  .admin-navbar-links {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .admin-navbar .btn {
+    width: 100%;
+    text-align: center;
   }
 
   .row-card {
     grid-template-columns: 1fr;
   }
 
+  .row-actions {
+    grid-column: auto;
+    grid-template-columns: 1fr;
+  }
+
   .thumb {
     width: 100%;
-    height: 180px;
+    height: 170px;
+  }
+
+  .site-footer {
+    align-items: flex-start;
+    font-size: 13px;
+  }
+}
+
+@media (max-width: 390px) {
+  .page-wrap {
+    padding: 10px;
+  }
+
+  .site-header,
+  .site-footer {
+    padding: 12px;
+  }
+
+  .hero-content {
+    padding: 66px 14px 42px;
+  }
+
+  .lead {
+    font-size: 16px;
+  }
+
+  .btn {
+    padding: 11px 14px;
+    font-size: 15px;
   }
 }
