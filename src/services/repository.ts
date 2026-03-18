@@ -6,7 +6,6 @@ import {
   getDoc,
   getDocs,
   limit,
-  orderBy,
   query,
   serverTimestamp,
   updateDoc,
@@ -27,9 +26,13 @@ const FIRESTORE_WRITE_TIMEOUT_MS = 5000;
 const LIST_CACHE_TTL_MS = 60_000;
 const FIRESTORE_READ_RETRIES = 1;
 const FIRESTORE_RETRY_DELAY_MS = 400;
+const FIRESTORE_REST_TIMEOUT_MS = 10_000;
 
 const envListLimit = Number(import.meta.env.VITE_FIRESTORE_LIST_LIMIT ?? '50');
 const FIRESTORE_LIST_LIMIT = Number.isFinite(envListLimit) && envListLimit > 0 ? Math.floor(envListLimit) : 50;
+const FIRESTORE_PROJECT_ID = import.meta.env.VITE_FIREBASE_PROJECT_ID;
+const FIRESTORE_API_KEY = import.meta.env.VITE_FIREBASE_API_KEY;
+const canUseFirestoreRestFallback = Boolean(FIRESTORE_PROJECT_ID && FIRESTORE_API_KEY);
 
 type CacheEntry<T> = {
   data: T[] | null;
@@ -77,6 +80,9 @@ const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(
 const isTimeoutError = (error: unknown): boolean =>
   error instanceof Error && /timeout/i.test(error.message);
 
+const isToMillisError = (error: unknown): boolean =>
+  error instanceof Error && /tomillis/i.test(error.message);
+
 const withRetryOnTimeout = async <T>(run: () => Promise<T>, retries = FIRESTORE_READ_RETRIES): Promise<T> => {
   let attemptsLeft = retries;
 
@@ -91,12 +97,6 @@ const withRetryOnTimeout = async <T>(run: () => Promise<T>, retries = FIRESTORE_
   }
 };
 
-const isCreatedAtOrderError = (error: unknown): boolean => {
-  if (!(error instanceof Error)) return false;
-  const message = error.message.toLowerCase();
-  return message.includes('tomillis') || message.includes('createdat');
-};
-
 const toIsoDate = (value: unknown): string => {
   if (typeof value === 'string') return value;
   if (value && typeof value === 'object' && 'toDate' in value) {
@@ -104,6 +104,131 @@ const toIsoDate = (value: unknown): string => {
     return toDate().toISOString();
   }
   return new Date().toISOString();
+};
+
+type RestFieldValue = {
+  stringValue?: string;
+  timestampValue?: string;
+  integerValue?: string;
+  doubleValue?: number;
+  booleanValue?: boolean;
+};
+
+type RestDocument = {
+  name: string;
+  fields?: Record<string, RestFieldValue>;
+};
+
+const getRestDocumentId = (name: string): string => name.split('/').pop() ?? crypto.randomUUID();
+
+const getRestFieldString = (fields: Record<string, RestFieldValue> | undefined, key: string): string => {
+  const field = fields?.[key];
+  if (!field) return '';
+  if (typeof field.stringValue === 'string') return field.stringValue;
+  if (typeof field.timestampValue === 'string') return field.timestampValue;
+  if (typeof field.integerValue === 'string') return field.integerValue;
+  if (typeof field.doubleValue === 'number') return String(field.doubleValue);
+  if (typeof field.booleanValue === 'boolean') return String(field.booleanValue);
+  return '';
+};
+
+const getRestCreatedAt = (fields: Record<string, RestFieldValue> | undefined): string => {
+  const raw = fields?.createdAt;
+  if (raw?.timestampValue) return raw.timestampValue;
+  if (raw?.stringValue) return raw.stringValue;
+  return new Date().toISOString();
+};
+
+const fetchFirestoreDocumentsViaRest = async (collectionName: string): Promise<RestDocument[]> => {
+  if (!canUseFirestoreRestFallback) {
+    throw new Error('Firestore REST fallback is unavailable because Firebase env vars are missing.');
+  }
+
+  const url =
+    `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(FIRESTORE_PROJECT_ID)}` +
+    `/databases/(default)/documents/${encodeURIComponent(collectionName)}` +
+    `?pageSize=${FIRESTORE_LIST_LIMIT}&key=${encodeURIComponent(FIRESTORE_API_KEY)}`;
+
+  const response = await withTimeout(fetch(url), FIRESTORE_REST_TIMEOUT_MS);
+  if (!response.ok) {
+    throw new Error(`Firestore REST request failed (${response.status}).`);
+  }
+
+  const payload = (await response.json()) as { documents?: RestDocument[] };
+  return payload.documents ?? [];
+};
+
+const fetchFirestoreDocumentViaRest = async (
+  collectionName: string,
+  documentId: string,
+): Promise<RestDocument | null> => {
+  if (!canUseFirestoreRestFallback) {
+    throw new Error('Firestore REST fallback is unavailable because Firebase env vars are missing.');
+  }
+
+  const url =
+    `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(FIRESTORE_PROJECT_ID)}` +
+    `/databases/(default)/documents/${encodeURIComponent(collectionName)}/${encodeURIComponent(documentId)}` +
+    `?key=${encodeURIComponent(FIRESTORE_API_KEY)}`;
+
+  const response = await withTimeout(fetch(url), FIRESTORE_REST_TIMEOUT_MS);
+  if (response.status === 404) return null;
+  if (!response.ok) {
+    throw new Error(`Firestore REST request failed (${response.status}).`);
+  }
+
+  return (await response.json()) as RestDocument;
+};
+
+const listPostsViaRest = async (): Promise<PostItem[]> => {
+  const docs = await fetchFirestoreDocumentsViaRest('posts');
+  const mapped = docs.map((docItem) => ({
+    id: getRestDocumentId(docItem.name),
+    title: getRestFieldString(docItem.fields, 'title'),
+    image: getRestFieldString(docItem.fields, 'image'),
+    description: getRestFieldString(docItem.fields, 'description'),
+    createdAt: getRestCreatedAt(docItem.fields),
+  }));
+  return sortByDateDesc(mapped);
+};
+
+const listProductsViaRest = async (): Promise<ProductItem[]> => {
+  const docs = await fetchFirestoreDocumentsViaRest('products');
+  const mapped = docs.map((docItem) => {
+    const shop = getRestFieldString(docItem.fields, 'shop') === 'shopee' ? 'shopee' : 'amazon';
+    return {
+      id: getRestDocumentId(docItem.name),
+      name: getRestFieldString(docItem.fields, 'name'),
+      image: getRestFieldString(docItem.fields, 'image'),
+      affiliateUrl: getRestFieldString(docItem.fields, 'affiliateUrl'),
+      shop,
+      createdAt: getRestCreatedAt(docItem.fields),
+    } satisfies ProductItem;
+  });
+  return sortByDateDesc(mapped);
+};
+
+const listGiftEmailsViaRest = async (): Promise<GiftItem[]> => {
+  const docs = await fetchFirestoreDocumentsViaRest('gifts');
+  const mapped = docs.map((docItem) => ({
+    id: getRestDocumentId(docItem.name),
+    email: getRestFieldString(docItem.fields, 'email'),
+    createdAt: getRestCreatedAt(docItem.fields),
+  }));
+  return sortByDateDesc(mapped);
+};
+
+const getPostByIdViaRest = async (id: string): Promise<PostItem | null> => {
+  const docItem = await fetchFirestoreDocumentViaRest('posts', id);
+  if (!docItem) return null;
+
+  return {
+    id: getRestDocumentId(docItem.name),
+    title: getRestFieldString(docItem.fields, 'title'),
+    image: getRestFieldString(docItem.fields, 'image'),
+    description: getRestFieldString(docItem.fields, 'description'),
+    createdAt: getRestCreatedAt(docItem.fields),
+  };
 };
 
 const mapPostDoc = (item: QueryDocumentSnapshot): PostItem => {
@@ -177,17 +302,15 @@ export const listPosts = async (): Promise<PostItem[]> => {
   }
 
   try {
-    const q = query(collection(db, 'posts'), orderBy('createdAt', 'desc'), limit(FIRESTORE_LIST_LIMIT));
+    const q = query(collection(db, 'posts'), limit(FIRESTORE_LIST_LIMIT));
     const snapshot = await withRetryOnTimeout(() => withTimeout(getDocs(q), FIRESTORE_LIST_TIMEOUT_MS));
-    const data = snapshot.docs.map(mapPostDoc);
+    const data = sortByDateDesc(snapshot.docs.map(mapPostDoc));
     postListCache.data = data;
     postListCache.timestamp = Date.now();
     return [...data];
   } catch (error) {
-    if (isCreatedAtOrderError(error)) {
-      const fallbackQuery = query(collection(db, 'posts'), limit(FIRESTORE_LIST_LIMIT));
-      const snapshot = await withRetryOnTimeout(() => withTimeout(getDocs(fallbackQuery), FIRESTORE_LIST_TIMEOUT_MS));
-      const data = sortByDateDesc(snapshot.docs.map(mapPostDoc));
+    if (isToMillisError(error)) {
+      const data = await listPostsViaRest();
       postListCache.data = data;
       postListCache.timestamp = Date.now();
       return [...data];
@@ -219,6 +342,10 @@ export const getPostById = async (id: string): Promise<PostItem | null> => {
       createdAt: toIsoDate(data.createdAt),
     };
   } catch (error) {
+    if (isToMillisError(error)) {
+      return getPostByIdViaRest(id);
+    }
+
     console.warn('Failed to load post by id from Firestore.', error);
     throw error;
   }
@@ -295,17 +422,15 @@ export const listProducts = async (): Promise<ProductItem[]> => {
 
   if (db) {
     try {
-      const q = query(collection(db, 'products'), orderBy('createdAt', 'desc'), limit(FIRESTORE_LIST_LIMIT));
+      const q = query(collection(db, 'products'), limit(FIRESTORE_LIST_LIMIT));
       const snapshot = await withRetryOnTimeout(() => withTimeout(getDocs(q), FIRESTORE_LIST_TIMEOUT_MS));
-      const data = snapshot.docs.map(mapProductDoc);
+      const data = sortByDateDesc(snapshot.docs.map(mapProductDoc));
       productListCache.data = data;
       productListCache.timestamp = Date.now();
       return [...data];
     } catch (error) {
-      if (isCreatedAtOrderError(error)) {
-        const fallbackQuery = query(collection(db, 'products'), limit(FIRESTORE_LIST_LIMIT));
-        const snapshot = await withRetryOnTimeout(() => withTimeout(getDocs(fallbackQuery), FIRESTORE_LIST_TIMEOUT_MS));
-        const data = sortByDateDesc(snapshot.docs.map(mapProductDoc));
+      if (isToMillisError(error)) {
+        const data = await listProductsViaRest();
         productListCache.data = data;
         productListCache.timestamp = Date.now();
         return [...data];
@@ -416,17 +541,15 @@ export const listGiftEmails = async (): Promise<GiftItem[]> => {
 
   if (db) {
     try {
-      const q = query(collection(db, 'gifts'), orderBy('createdAt', 'desc'), limit(FIRESTORE_LIST_LIMIT));
+      const q = query(collection(db, 'gifts'), limit(FIRESTORE_LIST_LIMIT));
       const snapshot = await withRetryOnTimeout(() => withTimeout(getDocs(q), FIRESTORE_LIST_TIMEOUT_MS));
-      const data = snapshot.docs.map(mapGiftDoc);
+      const data = sortByDateDesc(snapshot.docs.map(mapGiftDoc));
       giftListCache.data = data;
       giftListCache.timestamp = Date.now();
       return [...data];
     } catch (error) {
-      if (isCreatedAtOrderError(error)) {
-        const fallbackQuery = query(collection(db, 'gifts'), limit(FIRESTORE_LIST_LIMIT));
-        const snapshot = await withRetryOnTimeout(() => withTimeout(getDocs(fallbackQuery), FIRESTORE_LIST_TIMEOUT_MS));
-        const data = sortByDateDesc(snapshot.docs.map(mapGiftDoc));
+      if (isToMillisError(error)) {
+        const data = await listGiftEmailsViaRest();
         giftListCache.data = data;
         giftListCache.timestamp = Date.now();
         return [...data];
