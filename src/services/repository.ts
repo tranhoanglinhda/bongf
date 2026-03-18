@@ -91,6 +91,12 @@ const withRetryOnTimeout = async <T>(run: () => Promise<T>, retries = FIRESTORE_
   }
 };
 
+const isCreatedAtOrderError = (error: unknown): boolean => {
+  if (!(error instanceof Error)) return false;
+  const message = error.message.toLowerCase();
+  return message.includes('tomillis') || message.includes('createdat');
+};
+
 const toIsoDate = (value: unknown): string => {
   if (typeof value === 'string') return value;
   if (value && typeof value === 'object' && 'toDate' in value) {
@@ -178,6 +184,15 @@ export const listPosts = async (): Promise<PostItem[]> => {
     postListCache.timestamp = Date.now();
     return [...data];
   } catch (error) {
+    if (isCreatedAtOrderError(error)) {
+      const fallbackQuery = query(collection(db, 'posts'), limit(FIRESTORE_LIST_LIMIT));
+      const snapshot = await withRetryOnTimeout(() => withTimeout(getDocs(fallbackQuery), FIRESTORE_LIST_TIMEOUT_MS));
+      const data = sortByDateDesc(snapshot.docs.map(mapPostDoc));
+      postListCache.data = data;
+      postListCache.timestamp = Date.now();
+      return [...data];
+    }
+
     console.warn('Failed to list posts from Firestore.', error);
     throw error;
   }
@@ -287,6 +302,15 @@ export const listProducts = async (): Promise<ProductItem[]> => {
       productListCache.timestamp = Date.now();
       return [...data];
     } catch (error) {
+      if (isCreatedAtOrderError(error)) {
+        const fallbackQuery = query(collection(db, 'products'), limit(FIRESTORE_LIST_LIMIT));
+        const snapshot = await withRetryOnTimeout(() => withTimeout(getDocs(fallbackQuery), FIRESTORE_LIST_TIMEOUT_MS));
+        const data = sortByDateDesc(snapshot.docs.map(mapProductDoc));
+        productListCache.data = data;
+        productListCache.timestamp = Date.now();
+        return [...data];
+      }
+
       console.warn('Failed to list products from Firestore, using localStorage fallback.', error);
     }
   }
@@ -399,6 +423,15 @@ export const listGiftEmails = async (): Promise<GiftItem[]> => {
       giftListCache.timestamp = Date.now();
       return [...data];
     } catch (error) {
+      if (isCreatedAtOrderError(error)) {
+        const fallbackQuery = query(collection(db, 'gifts'), limit(FIRESTORE_LIST_LIMIT));
+        const snapshot = await withRetryOnTimeout(() => withTimeout(getDocs(fallbackQuery), FIRESTORE_LIST_TIMEOUT_MS));
+        const data = sortByDateDesc(snapshot.docs.map(mapGiftDoc));
+        giftListCache.data = data;
+        giftListCache.timestamp = Date.now();
+        return [...data];
+      }
+
       console.warn('Failed to list gift emails from Firestore, using localStorage fallback.', error);
     }
   }
