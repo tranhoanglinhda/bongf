@@ -8,6 +8,13 @@ const loading = ref(true);
 const error = ref('');
 const active = ref<'all' | 'amazon' | 'shopee'>('all');
 
+const toUiErrorMessage = (unknownError: unknown, fallback: string): string => {
+  if (unknownError instanceof Error && unknownError.message.trim()) {
+    return `${fallback} (${unknownError.message})`;
+  }
+  return fallback;
+};
+
 const filteredProducts = computed(() => {
   if (active.value === 'all') return products.value;
   return products.value.filter((item) => item.shop === active.value);
@@ -19,8 +26,8 @@ const loadProducts = async () => {
 
   try {
     products.value = await listProducts();
-  } catch {
-    error.value = 'Failed to load products. Please refresh and try again.';
+  } catch (unknownError) {
+    error.value = toUiErrorMessage(unknownError, 'Failed to load products. Please refresh and try again.');
   } finally {
     loading.value = false;
   }

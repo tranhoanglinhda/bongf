@@ -56,6 +56,13 @@ const productForm = reactive<ProductInput>({
 const postSubmitLabel = computed(() => (editingPostId.value ? 'Update Post' : 'Create Post'));
 const productSubmitLabel = computed(() => (editingProductId.value ? 'Update Product' : 'Create Product'));
 
+const toUiErrorMessage = (error: unknown, fallback: string): string => {
+  if (error instanceof Error && error.message.trim()) {
+    return `${fallback} (${error.message})`;
+  }
+  return fallback;
+};
+
 const resetPostForm = () => {
   postForm.title = '';
   postForm.image = '';
@@ -89,8 +96,8 @@ const loadPostsData = async (force = false, withLoader = true) => {
   try {
     posts.value = await listPosts();
     postsLoaded.value = true;
-  } catch {
-    dashboardError.value = 'Failed to load blog posts. Please refresh and try again.';
+  } catch (error) {
+    dashboardError.value = toUiErrorMessage(error, 'Failed to load blog posts. Please refresh and try again.');
   } finally {
     if (withLoader) loading.value = false;
   }
@@ -103,8 +110,8 @@ const loadProductsData = async (force = false, withLoader = true) => {
   try {
     products.value = await listProducts();
     productsLoaded.value = true;
-  } catch {
-    dashboardError.value = 'Failed to load products. Please refresh and try again.';
+  } catch (error) {
+    dashboardError.value = toUiErrorMessage(error, 'Failed to load products. Please refresh and try again.');
   } finally {
     if (withLoader) loading.value = false;
   }
@@ -117,8 +124,8 @@ const loadGiftsData = async (force = false, withLoader = true) => {
   try {
     gifts.value = await listGiftEmails();
     giftsLoaded.value = true;
-  } catch {
-    dashboardError.value = 'Failed to load gift emails. Please refresh and try again.';
+  } catch (error) {
+    dashboardError.value = toUiErrorMessage(error, 'Failed to load gift emails. Please refresh and try again.');
   } finally {
     if (withLoader) loading.value = false;
   }
@@ -152,8 +159,8 @@ const submitPost = async () => {
       if (postImageMode.value === 'upload' && postImageFile.value) {
         imageUrl = await uploadPostImage(postImageFile.value);
       }
-    } catch {
-      postError.value = 'Image upload failed. Please try again or use image URL mode.';
+    } catch (error) {
+      postError.value = toUiErrorMessage(error, 'Image upload failed. Please try again or use image URL mode.');
       return;
     }
 
@@ -173,8 +180,8 @@ const submitPost = async () => {
       } else {
         await createPost(payload);
       }
-    } catch {
-      postError.value = 'Failed to save post. Please check Firebase rules or try again.';
+    } catch (error) {
+      postError.value = toUiErrorMessage(error, 'Failed to save post. Please check Firebase rules or try again.');
       return;
     }
 
@@ -216,8 +223,8 @@ const submitProduct = async () => {
       } else {
         await createProduct({ ...productForm });
       }
-    } catch {
-      productError.value = 'Failed to save product. Please check Firebase rules or try again.';
+    } catch (error) {
+      productError.value = toUiErrorMessage(error, 'Failed to save product. Please check Firebase rules or try again.');
       return;
     }
 

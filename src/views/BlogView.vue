@@ -7,14 +7,21 @@ const posts = ref<PostItem[]>([]);
 const loading = ref(true);
 const error = ref('');
 
+const toUiErrorMessage = (unknownError: unknown, fallback: string): string => {
+  if (unknownError instanceof Error && unknownError.message.trim()) {
+    return `${fallback} (${unknownError.message})`;
+  }
+  return fallback;
+};
+
 const loadPosts = async () => {
   loading.value = true;
   error.value = '';
 
   try {
     posts.value = await listPosts();
-  } catch {
-    error.value = 'Failed to load posts. Please refresh and try again.';
+  } catch (unknownError) {
+    error.value = toUiErrorMessage(unknownError, 'Failed to load posts. Please refresh and try again.');
   } finally {
     loading.value = false;
   }
