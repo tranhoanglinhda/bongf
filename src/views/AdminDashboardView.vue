@@ -287,12 +287,6 @@ watch(tab, (nextTab) => {
 
 onMounted(async () => {
   await ensureTabData('posts');
-
-  // Warm up remaining tabs in background without blocking first render.
-  setTimeout(() => {
-    void loadProductsData(false, false);
-    void loadGiftsData(false, false);
-  }, 0);
 });
 </script>
 
