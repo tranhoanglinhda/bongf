@@ -18,6 +18,7 @@ import {
 } from '../services/repository';
 import { uploadPostImage } from '../services/upload';
 import type { GiftItem, PostInput, PostItem, ProductInput, ProductItem, ShopType } from '../types/models';
+import { DEFAULT_POST_CATEGORY, POST_CATEGORIES, getPostCategoryLabel } from '../utils/postCategories';
 import { toPostExcerpt } from '../utils/postContent';
 
 const router = useRouter();
@@ -49,6 +50,7 @@ const postForm = reactive<PostInput>({
   title: '',
   image: '',
   description: '',
+  category: DEFAULT_POST_CATEGORY,
 });
 
 const productForm = reactive<ProductInput>({
@@ -163,6 +165,7 @@ const resetPostForm = () => {
   postForm.title = '';
   postForm.image = '';
   postForm.description = '';
+  postForm.category = DEFAULT_POST_CATEGORY;
   postImageMode.value = 'url';
   postImageFile.value = null;
   postImagePreview.value = '';
@@ -353,6 +356,7 @@ const editPost = (item: PostItem) => {
   postForm.title = item.title;
   postForm.image = item.image;
   postForm.description = item.description;
+  postForm.category = item.category;
   postImageMode.value = 'url';
   postImageFile.value = null;
   postImagePreview.value = item.image;
@@ -435,6 +439,11 @@ onMounted(async () => {
       <form v-if="tab === 'posts'" class="panel" @submit.prevent="submitPost">
         <h2>{{ editingPostId ? 'Edit Post' : 'New Post' }}</h2>
         <input v-model="postForm.title" type="text" placeholder="Title" required />
+        <select v-model="postForm.category" required>
+          <option v-for="category in POST_CATEGORIES" :key="category.value" :value="category.value">
+            {{ category.label }}
+          </option>
+        </select>
 
         <div class="media-picker">
           <p class="picker-label">Post Image</p>
@@ -527,6 +536,7 @@ onMounted(async () => {
           <article class="row-card" v-for="item in posts" :key="item.id">
             <img :src="item.image" :alt="item.title" class="thumb" />
             <div class="row-body">
+              <p class="post-category">{{ getPostCategoryLabel(item.category) }}</p>
               <h3>{{ item.title }}</h3>
               <p>{{ getPostExcerpt(item.description) }}</p>
             </div>

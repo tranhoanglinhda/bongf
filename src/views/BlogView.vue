@@ -1,12 +1,20 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { listPosts } from '../services/repository';
-import type { PostItem } from '../types/models';
+import type { PostCategory, PostItem } from '../types/models';
+import { POST_CATEGORY_FILTERS, getPostCategoryLabel } from '../utils/postCategories';
 import { toPostExcerpt } from '../utils/postContent';
 
 const posts = ref<PostItem[]>([]);
 const loading = ref(true);
 const error = ref('');
+const activeCategory = ref<PostCategory | 'all'>('all');
+
+const filteredPosts = computed(() =>
+  activeCategory.value === 'all'
+    ? posts.value
+    : posts.value.filter((post) => post.category === activeCategory.value),
+);
 
 const toUiErrorMessage = (unknownError: unknown, fallback: string): string => {
   if (unknownError instanceof Error && unknownError.message.trim()) {
@@ -44,10 +52,28 @@ onMounted(loadPosts);
   <section v-else-if="error" class="state-box">{{ error }}</section>
   <section v-else-if="posts.length === 0" class="state-box">No posts yet. Add one from the Admin Dashboard.</section>
 
-  <section v-else class="post-grid">
-    <article class="post-card" v-for="post in posts" :key="post.id">
+  <section v-else class="category-bar">
+    <button
+      v-for="filter in POST_CATEGORY_FILTERS"
+      :key="filter.value"
+      type="button"
+      class="category-chip"
+      :class="{ active: activeCategory === filter.value }"
+      @click="activeCategory = filter.value"
+    >
+      {{ filter.label }}
+    </button>
+  </section>
+
+  <section v-if="!loading && !error && posts.length > 0 && filteredPosts.length === 0" class="state-box">
+    No posts found in this category.
+  </section>
+
+  <section v-else-if="!loading && !error && filteredPosts.length > 0" class="post-grid">
+    <article class="post-card" v-for="post in filteredPosts" :key="post.id">
       <img :src="post.image" :alt="post.title" class="cover" />
       <div class="body">
+        <p class="post-category">{{ getPostCategoryLabel(post.category) }}</p>
         <h2>{{ post.title }}</h2>
         <p>{{ getPostExcerpt(post.description) }}</p>
         <RouterLink :to="`/blog/${post.id}`" class="text-link">Read details</RouterLink>

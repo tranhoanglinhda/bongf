@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router';
 import DOMPurify from 'dompurify';
 import { getPostById } from '../services/repository';
 import type { PostItem } from '../types/models';
+import { getPostCategoryLabel } from '../utils/postCategories';
 import { toRenderablePostHtml } from '../utils/postContent';
 
 const route = useRoute();
@@ -49,6 +50,7 @@ onMounted(async () => {
   <article v-else-if="post" class="detail-wrap">
     <img :src="post.image" :alt="post.title" class="detail-image" />
     <p class="eyebrow">BongF Blog • {{ createdLabel }}</p>
+    <p class="detail-category">{{ getPostCategoryLabel(post.category) }}</p>
     <h1>{{ post.title }}</h1>
     <div class="detail-text" v-html="safePostHtml"></div>
     <RouterLink to="/blog" class="text-link">← Back to Blog</RouterLink>

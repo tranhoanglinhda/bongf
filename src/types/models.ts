@@ -3,8 +3,11 @@ export interface PostItem {
   title: string;
   image: string;
   description: string;
+  category: PostCategory;
   createdAt: string;
 }
+
+export type PostCategory = 'exercise' | 'nutrition' | 'experience';
 
 export type ShopType = 'amazon' | 'shopee';
 
@@ -27,6 +30,7 @@ export interface PostInput {
   title: string;
   image: string;
   description: string;
+  category: PostCategory;
 }
 
 export interface ProductInput {

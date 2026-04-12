@@ -13,6 +13,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import type { GiftItem, PostInput, PostItem, ProductInput, ProductItem } from '../types/models';
+import { normalizePostCategory } from '../utils/postCategories';
 
 const STORAGE_KEYS = {
   posts: 'bongf_posts',
@@ -187,6 +188,7 @@ const listPostsViaRest = async (): Promise<PostItem[]> => {
     title: getRestFieldString(docItem.fields, 'title'),
     image: getRestFieldString(docItem.fields, 'image'),
     description: getRestFieldString(docItem.fields, 'description'),
+    category: normalizePostCategory(getRestFieldString(docItem.fields, 'category')),
     createdAt: getRestCreatedAt(docItem.fields),
   }));
   return sortByDateDesc(mapped);
@@ -227,17 +229,25 @@ const getPostByIdViaRest = async (id: string): Promise<PostItem | null> => {
     title: getRestFieldString(docItem.fields, 'title'),
     image: getRestFieldString(docItem.fields, 'image'),
     description: getRestFieldString(docItem.fields, 'description'),
+    category: normalizePostCategory(getRestFieldString(docItem.fields, 'category')),
     createdAt: getRestCreatedAt(docItem.fields),
   };
 };
 
 const mapPostDoc = (item: QueryDocumentSnapshot): PostItem => {
-  const data = item.data() as { title: string; image: string; description: string; createdAt?: unknown };
+  const data = item.data() as {
+    title: string;
+    image: string;
+    description: string;
+    category?: string;
+    createdAt?: unknown;
+  };
   return {
     id: item.id,
     title: data.title,
     image: data.image,
     description: data.description,
+    category: normalizePostCategory(data.category),
     createdAt: toIsoDate(data.createdAt),
   };
 };
@@ -289,13 +299,18 @@ const setLocalList = <T>(key: string, value: T[]): void => {
 const sortByDateDesc = <T extends { createdAt: string }>(items: T[]): T[] =>
   items.sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));
 
+const normalizePostItem = (item: PostItem & Partial<Pick<PostItem, 'category'>>): PostItem => ({
+  ...item,
+  category: normalizePostCategory(item.category),
+});
+
 export const listPosts = async (): Promise<PostItem[]> => {
   if (postListCache.data && isCacheFresh(postListCache.timestamp)) {
     return [...postListCache.data];
   }
 
   if (!db) {
-    const localPosts = sortByDateDesc(getLocalList<PostItem>(STORAGE_KEYS.posts));
+    const localPosts = sortByDateDesc(getLocalList<PostItem>(STORAGE_KEYS.posts).map(normalizePostItem));
     postListCache.data = localPosts;
     postListCache.timestamp = Date.now();
     return [...localPosts];
@@ -323,7 +338,8 @@ export const listPosts = async (): Promise<PostItem[]> => {
 
 export const getPostById = async (id: string): Promise<PostItem | null> => {
   if (!db) {
-    return getLocalList<PostItem>(STORAGE_KEYS.posts).find((item) => item.id === id) ?? null;
+    const post = getLocalList<PostItem>(STORAGE_KEYS.posts).map(normalizePostItem).find((item) => item.id === id) ?? null;
+    return post;
   }
 
   const firestore = db;
@@ -333,12 +349,19 @@ export const getPostById = async (id: string): Promise<PostItem | null> => {
       withTimeout(getDoc(doc(firestore, 'posts', id)), FIRESTORE_DOC_TIMEOUT_MS),
     );
     if (!snapshot.exists()) return null;
-    const data = snapshot.data() as { title: string; image: string; description: string; createdAt?: unknown };
+    const data = snapshot.data() as {
+      title: string;
+      image: string;
+      description: string;
+      category?: string;
+      createdAt?: unknown;
+    };
     return {
       id: snapshot.id,
       title: data.title,
       image: data.image,
       description: data.description,
+      category: normalizePostCategory(data.category),
       createdAt: toIsoDate(data.createdAt),
     };
   } catch (error) {
