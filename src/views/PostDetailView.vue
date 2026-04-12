@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { useRoute } from 'vue-router';
+import DOMPurify from 'dompurify';
 import { getPostById } from '../services/repository';
 import type { PostItem } from '../types/models';
+import { toRenderablePostHtml } from '../utils/postContent';
 
 const route = useRoute();
 const post = ref<PostItem | null>(null);
@@ -19,6 +21,11 @@ const toUiErrorMessage = (unknownError: unknown, fallback: string): string => {
 const createdLabel = computed(() => {
   if (!post.value) return '';
   return new Date(post.value.createdAt).toLocaleDateString('en-US');
+});
+
+const safePostHtml = computed(() => {
+  if (!post.value) return '';
+  return DOMPurify.sanitize(toRenderablePostHtml(post.value.description));
 });
 
 onMounted(async () => {
@@ -43,7 +50,7 @@ onMounted(async () => {
     <img :src="post.image" :alt="post.title" class="detail-image" />
     <p class="eyebrow">BongF Blog • {{ createdLabel }}</p>
     <h1>{{ post.title }}</h1>
-    <p class="detail-text">{{ post.description }}</p>
+    <div class="detail-text" v-html="safePostHtml"></div>
     <RouterLink to="/blog" class="text-link">← Back to Blog</RouterLink>
   </article>
 

@@ -2,6 +2,7 @@
 import { onMounted, ref } from 'vue';
 import { listPosts } from '../services/repository';
 import type { PostItem } from '../types/models';
+import { toPostExcerpt } from '../utils/postContent';
 
 const posts = ref<PostItem[]>([]);
 const loading = ref(true);
@@ -27,6 +28,8 @@ const loadPosts = async () => {
   }
 };
 
+const getPostExcerpt = (content: string): string => toPostExcerpt(content, 120);
+
 onMounted(loadPosts);
 </script>
 
@@ -46,7 +49,7 @@ onMounted(loadPosts);
       <img :src="post.image" :alt="post.title" class="cover" />
       <div class="body">
         <h2>{{ post.title }}</h2>
-        <p>{{ post.description.slice(0, 120) }}{{ post.description.length > 120 ? '...' : '' }}</p>
+        <p>{{ getPostExcerpt(post.description) }}</p>
         <RouterLink :to="`/blog/${post.id}`" class="text-link">Read details</RouterLink>
       </div>
     </article>

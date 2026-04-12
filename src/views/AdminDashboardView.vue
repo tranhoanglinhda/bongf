@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
+import { QuillEditor } from '@vueup/vue-quill';
+import '@vueup/vue-quill/dist/vue-quill.snow.css';
 import {
   createPost,
   createProduct,
@@ -16,6 +18,7 @@ import {
 } from '../services/repository';
 import { uploadPostImage } from '../services/upload';
 import type { GiftItem, PostInput, PostItem, ProductInput, ProductItem, ShopType } from '../types/models';
+import { toPostExcerpt } from '../utils/postContent';
 
 const router = useRouter();
 const tab = ref<'posts' | 'products' | 'gifts'>('posts');
@@ -39,6 +42,8 @@ const postError = ref('');
 const productError = ref('');
 const dashboardError = ref('');
 const previewObjectUrl = ref<string | null>(null);
+const postEditorRef = ref<InstanceType<typeof QuillEditor> | null>(null);
+const postEditorImageUploading = ref(false);
 
 const postForm = reactive<PostInput>({
   title: '',
@@ -55,6 +60,97 @@ const productForm = reactive<ProductInput>({
 
 const postSubmitLabel = computed(() => (editingPostId.value ? 'Update Post' : 'Create Post'));
 const productSubmitLabel = computed(() => (editingProductId.value ? 'Update Product' : 'Create Product'));
+const POST_DESCRIPTION_SAFE_LIMIT_BYTES = 900_000;
+
+const isRichTextEmpty = (value: string): boolean => {
+  const plain = value
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return plain.length === 0;
+};
+
+const getUtf8ByteLength = (value: string): number => new Blob([value]).size;
+
+const createImageFileFromDataUrl = async (dataUrl: string): Promise<File> => {
+  const response = await fetch(dataUrl);
+  const blob = await response.blob();
+  const extension = blob.type === 'image/png' ? 'png' : blob.type === 'image/webp' ? 'webp' : 'jpg';
+  return new File([blob], `embedded-image.${extension}`, { type: blob.type || 'image/jpeg' });
+};
+
+const normalizePostDescription = async (content: string): Promise<string> => {
+  if (typeof window === 'undefined') return content;
+
+  const parser = new DOMParser();
+  const document = parser.parseFromString(content, 'text/html');
+  const images = Array.from(document.querySelectorAll('img'));
+
+  for (const image of images) {
+    const source = image.getAttribute('src') ?? '';
+    if (!source.startsWith('data:')) continue;
+
+    const file = await createImageFileFromDataUrl(source);
+    const uploadedUrl = await uploadPostImage(file, { allowInlineFallback: false });
+    image.setAttribute('src', uploadedUrl);
+  }
+
+  return document.body.innerHTML;
+};
+
+const insertImageIntoPostEditor = async () => {
+  const picker = document.createElement('input');
+  picker.type = 'file';
+  picker.accept = 'image/*';
+
+  picker.onchange = async () => {
+    const selected = picker.files?.[0] ?? null;
+    if (!selected) return;
+    if (postEditorImageUploading.value) return;
+
+    postEditorImageUploading.value = true;
+    postError.value = '';
+
+    try {
+      const imageUrl = await uploadPostImage(selected, { allowInlineFallback: false });
+      const editor = postEditorRef.value?.getQuill();
+      if (!editor) {
+        postError.value = 'Editor is not ready yet. Please try inserting the image again.';
+        return;
+      }
+
+      const range = editor.getSelection(true);
+      const index = range?.index ?? editor.getLength();
+      editor.insertEmbed(index, 'image', imageUrl, 'user');
+      editor.setSelection(index + 1, 0, 'user');
+    } catch (error) {
+      postError.value = toUiErrorMessage(error, 'Image upload failed. Please try again.');
+    } finally {
+      postEditorImageUploading.value = false;
+    }
+  };
+
+  picker.click();
+};
+
+const postEditorToolbar = {
+  container: [
+    [{ header: [1, 2, 3, false] }],
+    ['bold', 'italic', 'underline', 'strike'],
+    [{ list: 'ordered' }, { list: 'bullet' }],
+    [{ align: [] }],
+    ['blockquote', 'link', 'image'],
+    ['clean'],
+  ],
+  handlers: {
+    image: () => {
+      void insertImageIntoPostEditor();
+    },
+  },
+};
+
+const getPostExcerpt = (description: string): string => toPostExcerpt(description, 100);
 
 const toUiErrorMessage = (error: unknown, fallback: string): string => {
   if (error instanceof Error && error.message.trim()) {
@@ -149,6 +245,10 @@ const ensureTabData = async (currentTab: 'posts' | 'products' | 'gifts') => {
 
 const submitPost = async () => {
   if (postSubmitting.value) return;
+  if (postEditorImageUploading.value) {
+    postError.value = 'Please wait for the editor image upload to finish.';
+    return;
+  }
   postError.value = '';
   postSubmitting.value = true;
 
@@ -169,8 +269,21 @@ const submitPost = async () => {
       return;
     }
 
+    if (isRichTextEmpty(postForm.description)) {
+      postError.value = 'Please add post content before saving.';
+      return;
+    }
+
+    const normalizedDescription = await normalizePostDescription(postForm.description);
+    const normalizedSize = getUtf8ByteLength(normalizedDescription);
+    if (normalizedSize > POST_DESCRIPTION_SAFE_LIMIT_BYTES) {
+      postError.value = 'Post content is still too large after optimizing images. Please shorten the content.';
+      return;
+    }
+
     const payload: PostInput = {
       ...postForm,
+      description: normalizedDescription,
       image: imageUrl,
     };
 
@@ -360,11 +473,22 @@ onMounted(async () => {
           />
         </div>
 
-        <textarea v-model="postForm.description" rows="6" placeholder="Description" required />
+        <div class="editor-wrap">
+          <p class="picker-label">Post Content</p>
+          <QuillEditor
+            ref="postEditorRef"
+            v-model:content="postForm.description"
+            content-type="html"
+            theme="snow"
+            :toolbar="postEditorToolbar"
+            placeholder="Write your post content here..."
+          />
+          <p class="editor-hint">Use the toolbar to format text, add links, and insert images.</p>
+        </div>
         <p v-if="postError" class="error-text">{{ postError }}</p>
         <div class="action-row">
-          <button class="btn btn-primary" type="submit" :disabled="postSubmitting">
-            {{ postSubmitting ? 'Processing...' : postSubmitLabel }}
+          <button class="btn btn-primary" type="submit" :disabled="postSubmitting || postEditorImageUploading">
+            {{ postSubmitting ? 'Processing...' : postEditorImageUploading ? 'Uploading image...' : postSubmitLabel }}
           </button>
           <button v-if="editingPostId" class="btn btn-outline" type="button" :disabled="postSubmitting" @click="resetPostForm">Cancel</button>
         </div>
@@ -404,7 +528,7 @@ onMounted(async () => {
             <img :src="item.image" :alt="item.title" class="thumb" />
             <div class="row-body">
               <h3>{{ item.title }}</h3>
-              <p>{{ item.description.slice(0, 100) }}{{ item.description.length > 100 ? '...' : '' }}</p>
+              <p>{{ getPostExcerpt(item.description) }}</p>
             </div>
             <div class="row-actions">
               <button class="btn btn-ghost" @click="editPost(item)">Edit</button>

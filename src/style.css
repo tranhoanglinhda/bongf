@@ -537,9 +537,34 @@ select:focus {
 }
 
 .detail-text {
-  white-space: pre-line;
   line-height: 1.65;
   color: #23272b;
+}
+
+.detail-text p,
+.detail-text ul,
+.detail-text ol,
+.detail-text blockquote,
+.detail-text h1,
+.detail-text h2,
+.detail-text h3 {
+  margin: 0 0 12px;
+}
+
+.detail-text ul,
+.detail-text ol {
+  padding-left: 22px;
+}
+
+.detail-text a {
+  color: #0d7d63;
+  text-decoration: underline;
+}
+
+.detail-text img {
+  max-width: 100%;
+  border-radius: 10px;
+  border: 1px solid var(--line);
 }
 
 .admin-page {
@@ -578,7 +603,7 @@ select:focus {
 
 .admin-grid {
   display: grid;
-  grid-template-columns: 320px 1fr;
+  grid-template-columns: minmax(360px, 420px) 1fr;
   gap: 16px;
   margin-top: 16px;
 }
@@ -593,6 +618,32 @@ select:focus {
   padding: 10px;
   display: grid;
   gap: 10px;
+}
+
+.editor-wrap {
+  display: grid;
+  gap: 8px;
+}
+
+.editor-wrap .ql-toolbar.ql-snow,
+.editor-wrap .ql-container.ql-snow {
+  border-color: var(--line);
+  background: var(--paper);
+}
+
+.editor-wrap .ql-container {
+  min-height: 280px;
+  font-family: inherit;
+  font-size: 15px;
+}
+
+.editor-wrap .ql-editor {
+  min-height: 230px;
+}
+
+.editor-hint {
+  color: var(--muted);
+  font-size: 13px;
 }
 
 .picker-label {
