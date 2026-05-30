@@ -12,13 +12,13 @@ import {
   type QueryDocumentSnapshot,
 } from 'firebase/firestore';
 import { db } from '../firebase/config';
-import type { GiftItem, PostInput, PostItem, ProductInput, ProductItem } from '../types/models';
-import { normalizePostCategory } from '../utils/postCategories';
+import type { LinkItem, RecipeItem, WorkoutItem } from '../types/models';
+import { SEED_LINKS, SEED_RECIPES, SEED_WORKOUTS } from '../data/bongfSeed';
 
 const STORAGE_KEYS = {
-  posts: 'bongf_posts',
-  products: 'bongf_products',
-  gifts: 'bongf_gifts',
+  workouts: 'bongf_workouts',
+  recipes: 'bongf_recipes',
+  links: 'bongf_links',
 } as const;
 
 const FIRESTORE_LIST_TIMEOUT_MS = 10_000;
@@ -35,36 +35,11 @@ const FIRESTORE_PROJECT_ID = import.meta.env.VITE_FIREBASE_PROJECT_ID;
 const FIRESTORE_API_KEY = import.meta.env.VITE_FIREBASE_API_KEY;
 const canUseFirestoreRestFallback = Boolean(FIRESTORE_PROJECT_ID && FIRESTORE_API_KEY);
 
-type CacheEntry<T> = {
-  data: T[] | null;
-  timestamp: number;
-};
-
-const postListCache: CacheEntry<PostItem> = { data: null, timestamp: 0 };
-const productListCache: CacheEntry<ProductItem> = { data: null, timestamp: 0 };
-const giftListCache: CacheEntry<GiftItem> = { data: null, timestamp: 0 };
-
-const isCacheFresh = (timestamp: number): boolean => Date.now() - timestamp < LIST_CACHE_TTL_MS;
-
-const invalidatePostCache = (): void => {
-  postListCache.data = null;
-  postListCache.timestamp = 0;
-};
-
-const invalidateProductCache = (): void => {
-  productListCache.data = null;
-  productListCache.timestamp = 0;
-};
-
-const invalidateGiftCache = (): void => {
-  giftListCache.data = null;
-  giftListCache.timestamp = 0;
-};
+/* ---------- shared primitives ---------- */
 
 const withTimeout = <T>(promise: Promise<T>, ms: number): Promise<T> =>
   new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`Firestore request timeout after ${ms}ms.`)), ms);
-
     promise
       .then((result) => {
         clearTimeout(timer);
@@ -86,7 +61,6 @@ const isToMillisError = (error: unknown): boolean =>
 
 const withRetryOnTimeout = async <T>(run: () => Promise<T>, retries = FIRESTORE_READ_RETRIES): Promise<T> => {
   let attemptsLeft = retries;
-
   while (true) {
     try {
       return await run();
@@ -101,190 +75,17 @@ const withRetryOnTimeout = async <T>(run: () => Promise<T>, retries = FIRESTORE_
 const toIsoDate = (value: unknown): string => {
   if (typeof value === 'string') return value;
   if (value && typeof value === 'object' && 'toDate' in value) {
-    const toDate = (value as { toDate: () => Date }).toDate;
-    return toDate().toISOString();
+    return (value as { toDate: () => Date }).toDate().toISOString();
   }
   return new Date().toISOString();
 };
 
-type RestFieldValue = {
-  stringValue?: string;
-  timestampValue?: string;
-  integerValue?: string;
-  doubleValue?: number;
-  booleanValue?: boolean;
-};
-
-type RestDocument = {
-  name: string;
-  fields?: Record<string, RestFieldValue>;
-};
-
-const getRestDocumentId = (name: string): string => name.split('/').pop() ?? crypto.randomUUID();
-
-const getRestFieldString = (fields: Record<string, RestFieldValue> | undefined, key: string): string => {
-  const field = fields?.[key];
-  if (!field) return '';
-  if (typeof field.stringValue === 'string') return field.stringValue;
-  if (typeof field.timestampValue === 'string') return field.timestampValue;
-  if (typeof field.integerValue === 'string') return field.integerValue;
-  if (typeof field.doubleValue === 'number') return String(field.doubleValue);
-  if (typeof field.booleanValue === 'boolean') return String(field.booleanValue);
-  return '';
-};
-
-const getRestCreatedAt = (fields: Record<string, RestFieldValue> | undefined): string => {
-  const raw = fields?.createdAt;
-  if (raw?.timestampValue) return raw.timestampValue;
-  if (raw?.stringValue) return raw.stringValue;
-  return new Date().toISOString();
-};
-
-const fetchFirestoreDocumentsViaRest = async (collectionName: string): Promise<RestDocument[]> => {
-  if (!canUseFirestoreRestFallback) {
-    throw new Error('Firestore REST fallback is unavailable because Firebase env vars are missing.');
-  }
-
-  const url =
-    `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(FIRESTORE_PROJECT_ID)}` +
-    `/databases/(default)/documents/${encodeURIComponent(collectionName)}` +
-    `?pageSize=${FIRESTORE_LIST_LIMIT}&key=${encodeURIComponent(FIRESTORE_API_KEY)}`;
-
-  const response = await withTimeout(fetch(url), FIRESTORE_REST_TIMEOUT_MS);
-  if (!response.ok) {
-    throw new Error(`Firestore REST request failed (${response.status}).`);
-  }
-
-  const payload = (await response.json()) as { documents?: RestDocument[] };
-  return payload.documents ?? [];
-};
-
-const fetchFirestoreDocumentViaRest = async (
-  collectionName: string,
-  documentId: string,
-): Promise<RestDocument | null> => {
-  if (!canUseFirestoreRestFallback) {
-    throw new Error('Firestore REST fallback is unavailable because Firebase env vars are missing.');
-  }
-
-  const url =
-    `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(FIRESTORE_PROJECT_ID)}` +
-    `/databases/(default)/documents/${encodeURIComponent(collectionName)}/${encodeURIComponent(documentId)}` +
-    `?key=${encodeURIComponent(FIRESTORE_API_KEY)}`;
-
-  const response = await withTimeout(fetch(url), FIRESTORE_REST_TIMEOUT_MS);
-  if (response.status === 404) return null;
-  if (!response.ok) {
-    throw new Error(`Firestore REST request failed (${response.status}).`);
-  }
-
-  return (await response.json()) as RestDocument;
-};
-
-const listPostsViaRest = async (): Promise<PostItem[]> => {
-  const docs = await fetchFirestoreDocumentsViaRest('posts');
-  const mapped = docs.map((docItem) => ({
-    id: getRestDocumentId(docItem.name),
-    title: getRestFieldString(docItem.fields, 'title'),
-    image: getRestFieldString(docItem.fields, 'image'),
-    description: getRestFieldString(docItem.fields, 'description'),
-    category: normalizePostCategory(getRestFieldString(docItem.fields, 'category')),
-    createdAt: getRestCreatedAt(docItem.fields),
-  }));
-  return sortByDateDesc(mapped);
-};
-
-const listProductsViaRest = async (): Promise<ProductItem[]> => {
-  const docs = await fetchFirestoreDocumentsViaRest('products');
-  const mapped = docs.map((docItem) => {
-    const shop = getRestFieldString(docItem.fields, 'shop') === 'shopee' ? 'shopee' : 'amazon';
-    return {
-      id: getRestDocumentId(docItem.name),
-      name: getRestFieldString(docItem.fields, 'name'),
-      image: getRestFieldString(docItem.fields, 'image'),
-      affiliateUrl: getRestFieldString(docItem.fields, 'affiliateUrl'),
-      shop,
-      createdAt: getRestCreatedAt(docItem.fields),
-    } satisfies ProductItem;
-  });
-  return sortByDateDesc(mapped);
-};
-
-const listGiftEmailsViaRest = async (): Promise<GiftItem[]> => {
-  const docs = await fetchFirestoreDocumentsViaRest('gifts');
-  const mapped = docs.map((docItem) => ({
-    id: getRestDocumentId(docItem.name),
-    email: getRestFieldString(docItem.fields, 'email'),
-    createdAt: getRestCreatedAt(docItem.fields),
-  }));
-  return sortByDateDesc(mapped);
-};
-
-const getPostByIdViaRest = async (id: string): Promise<PostItem | null> => {
-  const docItem = await fetchFirestoreDocumentViaRest('posts', id);
-  if (!docItem) return null;
-
-  return {
-    id: getRestDocumentId(docItem.name),
-    title: getRestFieldString(docItem.fields, 'title'),
-    image: getRestFieldString(docItem.fields, 'image'),
-    description: getRestFieldString(docItem.fields, 'description'),
-    category: normalizePostCategory(getRestFieldString(docItem.fields, 'category')),
-    createdAt: getRestCreatedAt(docItem.fields),
-  };
-};
-
-const mapPostDoc = (item: QueryDocumentSnapshot): PostItem => {
-  const data = item.data() as {
-    title: string;
-    image: string;
-    description: string;
-    category?: string;
-    createdAt?: unknown;
-  };
-  return {
-    id: item.id,
-    title: data.title,
-    image: data.image,
-    description: data.description,
-    category: normalizePostCategory(data.category),
-    createdAt: toIsoDate(data.createdAt),
-  };
-};
-
-const mapProductDoc = (item: QueryDocumentSnapshot): ProductItem => {
-  const data = item.data() as {
-    name: string;
-    image: string;
-    affiliateUrl: string;
-    shop: 'amazon' | 'shopee';
-    createdAt?: unknown;
-  };
-
-  return {
-    id: item.id,
-    name: data.name,
-    image: data.image,
-    affiliateUrl: data.affiliateUrl,
-    shop: data.shop,
-    createdAt: toIsoDate(data.createdAt),
-  };
-};
-
-const mapGiftDoc = (item: QueryDocumentSnapshot): GiftItem => {
-  const data = item.data() as { email: string; createdAt?: unknown };
-
-  return {
-    id: item.id,
-    email: data.email,
-    createdAt: toIsoDate(data.createdAt),
-  };
-};
+const sortByDateDesc = <T extends { createdAt: string }>(items: T[]): T[] =>
+  [...items].sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));
 
 const getLocalList = <T>(key: string): T[] => {
   const raw = localStorage.getItem(key);
   if (!raw) return [];
-
   try {
     return JSON.parse(raw) as T[];
   } catch {
@@ -296,313 +97,347 @@ const setLocalList = <T>(key: string, value: T[]): void => {
   localStorage.setItem(key, JSON.stringify(value));
 };
 
-const sortByDateDesc = <T extends { createdAt: string }>(items: T[]): T[] =>
-  items.sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));
+/* ---------- REST fallback value parsing ---------- */
 
-const normalizePostItem = (item: PostItem & Partial<Pick<PostItem, 'category'>>): PostItem => ({
-  ...item,
-  category: normalizePostCategory(item.category),
+type RestValue = {
+  stringValue?: string;
+  timestampValue?: string;
+  integerValue?: string;
+  doubleValue?: number;
+  booleanValue?: boolean;
+  arrayValue?: { values?: RestValue[] };
+  mapValue?: { fields?: Record<string, RestValue> };
+};
+
+type RestDocument = {
+  name: string;
+  fields?: Record<string, RestValue>;
+};
+
+const parseRestValue = (value: RestValue | undefined): unknown => {
+  if (!value) return undefined;
+  if (typeof value.stringValue === 'string') return value.stringValue;
+  if (typeof value.timestampValue === 'string') return value.timestampValue;
+  if (typeof value.integerValue === 'string') return Number(value.integerValue);
+  if (typeof value.doubleValue === 'number') return value.doubleValue;
+  if (typeof value.booleanValue === 'boolean') return value.booleanValue;
+  if (value.arrayValue) return (value.arrayValue.values ?? []).map(parseRestValue);
+  if (value.mapValue) return parseRestFields(value.mapValue.fields);
+  return undefined;
+};
+
+const parseRestFields = (fields: Record<string, RestValue> | undefined): Record<string, unknown> => {
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(fields ?? {})) {
+    result[key] = parseRestValue(value);
+  }
+  return result;
+};
+
+const getRestDocumentId = (name: string): string => name.split('/').pop() ?? crypto.randomUUID();
+
+const fetchDocumentsViaRest = async (collectionName: string): Promise<RestDocument[]> => {
+  if (!canUseFirestoreRestFallback) {
+    throw new Error('Firestore REST fallback is unavailable because Firebase env vars are missing.');
+  }
+  const url =
+    `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(FIRESTORE_PROJECT_ID)}` +
+    `/databases/(default)/documents/${encodeURIComponent(collectionName)}` +
+    `?pageSize=${FIRESTORE_LIST_LIMIT}&key=${encodeURIComponent(FIRESTORE_API_KEY)}`;
+  const response = await withTimeout(fetch(url), FIRESTORE_REST_TIMEOUT_MS);
+  if (!response.ok) throw new Error(`Firestore REST request failed (${response.status}).`);
+  const payload = (await response.json()) as { documents?: RestDocument[] };
+  return payload.documents ?? [];
+};
+
+const fetchDocumentViaRest = async (collectionName: string, id: string): Promise<RestDocument | null> => {
+  if (!canUseFirestoreRestFallback) {
+    throw new Error('Firestore REST fallback is unavailable because Firebase env vars are missing.');
+  }
+  const url =
+    `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(FIRESTORE_PROJECT_ID)}` +
+    `/databases/(default)/documents/${encodeURIComponent(collectionName)}/${encodeURIComponent(id)}` +
+    `?key=${encodeURIComponent(FIRESTORE_API_KEY)}`;
+  const response = await withTimeout(fetch(url), FIRESTORE_REST_TIMEOUT_MS);
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error(`Firestore REST request failed (${response.status}).`);
+  return (await response.json()) as RestDocument;
+};
+
+/* ---------- generic collection store ---------- */
+
+interface BaseItem {
+  id: string;
+  createdAt: string;
+}
+
+type CacheEntry<T> = { data: T[] | null; timestamp: number };
+
+interface CollectionStore<T extends BaseItem, I> {
+  list: () => Promise<T[]>;
+  getById: (id: string) => Promise<T | null>;
+  create: (payload: I) => Promise<void>;
+  update: (id: string, payload: I) => Promise<void>;
+  remove: (id: string) => Promise<void>;
+}
+
+const createStore = <T extends BaseItem, I>(
+  collectionName: string,
+  storageKey: string,
+  mapFields: (raw: Record<string, unknown>) => Omit<T, 'id' | 'createdAt'>,
+  seed: T[],
+): CollectionStore<T, I> => {
+  const cache: CacheEntry<T> = { data: null, timestamp: 0 };
+  const isCacheFresh = (): boolean => cache.data !== null && Date.now() - cache.timestamp < LIST_CACHE_TTL_MS;
+  const remember = (data: T[]): T[] => {
+    cache.data = data;
+    cache.timestamp = Date.now();
+    return [...data];
+  };
+  const invalidate = (): void => {
+    cache.data = null;
+    cache.timestamp = 0;
+  };
+
+  const ensureSeededLocally = (): T[] => {
+    const existing = getLocalList<T>(storageKey);
+    if (existing.length > 0) return existing;
+    setLocalList(storageKey, seed);
+    return [...seed];
+  };
+
+  const mapSnapshot = (snapshot: QueryDocumentSnapshot): T =>
+    ({
+      ...mapFields(snapshot.data() as Record<string, unknown>),
+      id: snapshot.id,
+      createdAt: toIsoDate((snapshot.data() as { createdAt?: unknown }).createdAt),
+    }) as T;
+
+  const mapRestDocument = (document: RestDocument): T => {
+    const fields = parseRestFields(document.fields);
+    return {
+      ...mapFields(fields),
+      id: getRestDocumentId(document.name),
+      createdAt: toIsoDate(fields.createdAt),
+    } as T;
+  };
+
+  const list = async (): Promise<T[]> => {
+    if (isCacheFresh()) return [...(cache.data as T[])];
+
+    if (!db) {
+      return remember(sortByDateDesc(ensureSeededLocally()));
+    }
+
+    try {
+      const q = query(collection(db, collectionName), limit(FIRESTORE_LIST_LIMIT));
+      const snapshot = await withRetryOnTimeout(() => withTimeout(getDocs(q), FIRESTORE_LIST_TIMEOUT_MS));
+      return remember(sortByDateDesc(snapshot.docs.map(mapSnapshot)));
+    } catch (error) {
+      if (isToMillisError(error)) {
+        const docs = await fetchDocumentsViaRest(collectionName);
+        return remember(sortByDateDesc(docs.map(mapRestDocument)));
+      }
+      console.warn(`Failed to list ${collectionName} from Firestore, using localStorage fallback.`, error);
+      return remember(sortByDateDesc(ensureSeededLocally()));
+    }
+  };
+
+  const getById = async (id: string): Promise<T | null> => {
+    if (!db) {
+      return ensureSeededLocally().find((item) => item.id === id) ?? null;
+    }
+
+    const firestore = db;
+    try {
+      const snapshot = await withRetryOnTimeout(() =>
+        withTimeout(getDoc(doc(firestore, collectionName, id)), FIRESTORE_DOC_TIMEOUT_MS),
+      );
+      if (!snapshot.exists()) return null;
+      return {
+        ...mapFields(snapshot.data() as Record<string, unknown>),
+        id: snapshot.id,
+        createdAt: toIsoDate((snapshot.data() as { createdAt?: unknown }).createdAt),
+      } as T;
+    } catch (error) {
+      if (isToMillisError(error)) {
+        const document = await fetchDocumentViaRest(collectionName, id);
+        return document ? mapRestDocument(document) : null;
+      }
+      console.warn(`Failed to load ${collectionName}/${id} from Firestore.`, error);
+      throw error;
+    }
+  };
+
+  const create = async (payload: I): Promise<void> => {
+    if (db) {
+      try {
+        await withTimeout(
+          addDoc(collection(db, collectionName), { ...(payload as Record<string, unknown>), createdAt: serverTimestamp() }),
+          FIRESTORE_WRITE_TIMEOUT_MS,
+        );
+        invalidate();
+        return;
+      } catch (error) {
+        console.warn(`Failed to create ${collectionName} in Firestore, saving to localStorage.`, error);
+      }
+    }
+
+    const items = getLocalList<T>(storageKey);
+    items.unshift({ ...(payload as object), id: crypto.randomUUID(), createdAt: new Date().toISOString() } as T);
+    setLocalList(storageKey, items);
+    invalidate();
+  };
+
+  const update = async (id: string, payload: I): Promise<void> => {
+    if (db) {
+      try {
+        await withTimeout(
+          updateDoc(doc(db, collectionName, id), { ...(payload as Record<string, unknown>) }),
+          FIRESTORE_WRITE_TIMEOUT_MS,
+        );
+        invalidate();
+        return;
+      } catch (error) {
+        console.warn(`Failed to update ${collectionName} in Firestore, updating localStorage.`, error);
+      }
+    }
+
+    const items = getLocalList<T>(storageKey).map((item) =>
+      item.id === id ? ({ ...item, ...(payload as object) } as T) : item,
+    );
+    setLocalList(storageKey, items);
+    invalidate();
+  };
+
+  const remove = async (id: string): Promise<void> => {
+    if (db) {
+      try {
+        await withTimeout(deleteDoc(doc(db, collectionName, id)), FIRESTORE_WRITE_TIMEOUT_MS);
+        invalidate();
+        return;
+      } catch (error) {
+        console.warn(`Failed to delete ${collectionName} in Firestore, deleting from localStorage.`, error);
+      }
+    }
+
+    const items = getLocalList<T>(storageKey).filter((item) => item.id !== id);
+    setLocalList(storageKey, items);
+    invalidate();
+  };
+
+  return { list, getById, create, update, remove };
+};
+
+/* ---------- field mappers ---------- */
+
+const asString = (value: unknown): string => (typeof value === 'string' ? value : value == null ? '' : String(value));
+const asNumber = (value: unknown): number => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+const asStringArray = (value: unknown): string[] =>
+  Array.isArray(value) ? value.map(asString) : [];
+
+const mapWorkoutFields = (raw: Record<string, unknown>): Omit<WorkoutItem, 'id' | 'createdAt'> => {
+  const level = Math.min(3, Math.max(1, asNumber(raw.level) || 1)) as WorkoutItem['level'];
+  return {
+    title: asString(raw.title),
+    vi: asString(raw.vi),
+    cover: asString(raw.cover),
+    level,
+    levelLabel: (asString(raw.levelLabel) || 'Dễ') as WorkoutItem['levelLabel'],
+    duration: asNumber(raw.duration),
+    kcal: asNumber(raw.kcal),
+    focus: asString(raw.focus),
+    blurb: asString(raw.blurb),
+    tags: asStringArray(raw.tags),
+    equipment: asStringArray(raw.equipment),
+    steps: Array.isArray(raw.steps)
+      ? raw.steps.map((step) => {
+          const item = (step ?? {}) as Record<string, unknown>;
+          return { name: asString(item.name), note: asString(item.note), val: asString(item.val), unit: asString(item.unit) };
+        })
+      : [],
+  };
+};
+
+const mapRecipeFields = (raw: Record<string, unknown>): Omit<RecipeItem, 'id' | 'createdAt'> => ({
+  title: asString(raw.title),
+  vi: asString(raw.vi),
+  cover: asString(raw.cover),
+  meal: (asString(raw.meal) || 'Bữa sáng') as RecipeItem['meal'],
+  time: asNumber(raw.time),
+  servings: asNumber(raw.servings),
+  kcal: asNumber(raw.kcal),
+  protein: asString(raw.protein) || '—',
+  blurb: asString(raw.blurb),
+  tags: asStringArray(raw.tags),
+  ingredients: Array.isArray(raw.ingredients)
+    ? raw.ingredients.map((ingredient) => {
+        const item = (ingredient ?? {}) as Record<string, unknown>;
+        return { name: asString(item.name), amt: asString(item.amt) };
+      })
+    : [],
+  steps: Array.isArray(raw.steps)
+    ? raw.steps.map((step) => {
+        const item = (step ?? {}) as Record<string, unknown>;
+        return { name: asString(item.name), note: asString(item.note) };
+      })
+    : [],
 });
 
-export const listPosts = async (): Promise<PostItem[]> => {
-  if (postListCache.data && isCacheFresh(postListCache.timestamp)) {
-    return [...postListCache.data];
-  }
+const mapLinkFields = (raw: Record<string, unknown>): Omit<LinkItem, 'id' | 'createdAt'> => ({
+  name: asString(raw.name),
+  cat: (asString(raw.cat) || 'apparel') as LinkItem['cat'],
+  shop: (asString(raw.shop) || 'shopee') as LinkItem['shop'],
+  price: asString(raw.price),
+  note: asString(raw.note),
+  thumb: asString(raw.thumb),
+  affiliateUrl: asString(raw.affiliateUrl) || '#',
+});
 
-  if (!db) {
-    const localPosts = sortByDateDesc(getLocalList<PostItem>(STORAGE_KEYS.posts).map(normalizePostItem));
-    postListCache.data = localPosts;
-    postListCache.timestamp = Date.now();
-    return [...localPosts];
-  }
+/* ---------- public stores ---------- */
 
-  try {
-    const q = query(collection(db, 'posts'), limit(FIRESTORE_LIST_LIMIT));
-    const snapshot = await withRetryOnTimeout(() => withTimeout(getDocs(q), FIRESTORE_LIST_TIMEOUT_MS));
-    const data = sortByDateDesc(snapshot.docs.map(mapPostDoc));
-    postListCache.data = data;
-    postListCache.timestamp = Date.now();
-    return [...data];
-  } catch (error) {
-    if (isToMillisError(error)) {
-      const data = await listPostsViaRest();
-      postListCache.data = data;
-      postListCache.timestamp = Date.now();
-      return [...data];
-    }
+const workoutStore = createStore<WorkoutItem, import('../types/models').WorkoutInput>(
+  'workouts',
+  STORAGE_KEYS.workouts,
+  mapWorkoutFields,
+  SEED_WORKOUTS,
+);
 
-    console.warn('Failed to list posts from Firestore.', error);
-    throw error;
-  }
-};
+const recipeStore = createStore<RecipeItem, import('../types/models').RecipeInput>(
+  'recipes',
+  STORAGE_KEYS.recipes,
+  mapRecipeFields,
+  SEED_RECIPES,
+);
 
-export const getPostById = async (id: string): Promise<PostItem | null> => {
-  if (!db) {
-    const post = getLocalList<PostItem>(STORAGE_KEYS.posts).map(normalizePostItem).find((item) => item.id === id) ?? null;
-    return post;
-  }
+const linkStore = createStore<LinkItem, import('../types/models').LinkInput>(
+  'links',
+  STORAGE_KEYS.links,
+  mapLinkFields,
+  SEED_LINKS,
+);
 
-  const firestore = db;
+export const listWorkouts = workoutStore.list;
+export const getWorkoutById = workoutStore.getById;
+export const createWorkout = workoutStore.create;
+export const updateWorkout = workoutStore.update;
+export const deleteWorkout = workoutStore.remove;
 
-  try {
-    const snapshot = await withRetryOnTimeout(() =>
-      withTimeout(getDoc(doc(firestore, 'posts', id)), FIRESTORE_DOC_TIMEOUT_MS),
-    );
-    if (!snapshot.exists()) return null;
-    const data = snapshot.data() as {
-      title: string;
-      image: string;
-      description: string;
-      category?: string;
-      createdAt?: unknown;
-    };
-    return {
-      id: snapshot.id,
-      title: data.title,
-      image: data.image,
-      description: data.description,
-      category: normalizePostCategory(data.category),
-      createdAt: toIsoDate(data.createdAt),
-    };
-  } catch (error) {
-    if (isToMillisError(error)) {
-      return getPostByIdViaRest(id);
-    }
+export const listRecipes = recipeStore.list;
+export const getRecipeById = recipeStore.getById;
+export const createRecipe = recipeStore.create;
+export const updateRecipe = recipeStore.update;
+export const deleteRecipe = recipeStore.remove;
 
-    console.warn('Failed to load post by id from Firestore.', error);
-    throw error;
-  }
-};
+export const listLinks = linkStore.list;
+export const createLink = linkStore.create;
+export const updateLink = linkStore.update;
+export const deleteLink = linkStore.remove;
 
-export const createPost = async (payload: PostInput): Promise<void> => {
-  if (!db) {
-    const posts = getLocalList<PostItem>(STORAGE_KEYS.posts);
-    posts.push({
-      id: crypto.randomUUID(),
-      ...payload,
-      createdAt: new Date().toISOString(),
-    });
-    setLocalList(STORAGE_KEYS.posts, posts);
-    invalidatePostCache();
-    return;
-  }
-
-  try {
-    await withTimeout(
-      addDoc(collection(db, 'posts'), {
-        ...payload,
-        createdAt: serverTimestamp(),
-      }),
-      FIRESTORE_WRITE_TIMEOUT_MS,
-    );
-    invalidatePostCache();
-  } catch (error) {
-    console.warn('Failed to create post in Firestore.', error);
-    throw error;
-  }
-};
-
-export const updatePostItem = async (id: string, payload: PostInput): Promise<void> => {
-  if (!db) {
-    const posts = getLocalList<PostItem>(STORAGE_KEYS.posts).map((item) =>
-      item.id === id ? { ...item, ...payload } : item,
-    );
-    setLocalList(STORAGE_KEYS.posts, posts);
-    invalidatePostCache();
-    return;
-  }
-
-  try {
-    await withTimeout(updateDoc(doc(db, 'posts', id), { ...payload }), FIRESTORE_WRITE_TIMEOUT_MS);
-    invalidatePostCache();
-  } catch (error) {
-    console.warn('Failed to update post in Firestore.', error);
-    throw error;
-  }
-};
-
-export const deletePostItem = async (id: string): Promise<void> => {
-  if (!db) {
-    const posts = getLocalList<PostItem>(STORAGE_KEYS.posts).filter((item) => item.id !== id);
-    setLocalList(STORAGE_KEYS.posts, posts);
-    invalidatePostCache();
-    return;
-  }
-
-  try {
-    await withTimeout(deleteDoc(doc(db, 'posts', id)), FIRESTORE_WRITE_TIMEOUT_MS);
-    invalidatePostCache();
-  } catch (error) {
-    console.warn('Failed to delete post in Firestore.', error);
-    throw error;
-  }
-};
-
-export const listProducts = async (): Promise<ProductItem[]> => {
-  if (productListCache.data && isCacheFresh(productListCache.timestamp)) {
-    return [...productListCache.data];
-  }
-
-  if (db) {
-    try {
-      const q = query(collection(db, 'products'), limit(FIRESTORE_LIST_LIMIT));
-      const snapshot = await withRetryOnTimeout(() => withTimeout(getDocs(q), FIRESTORE_LIST_TIMEOUT_MS));
-      const data = sortByDateDesc(snapshot.docs.map(mapProductDoc));
-      productListCache.data = data;
-      productListCache.timestamp = Date.now();
-      return [...data];
-    } catch (error) {
-      if (isToMillisError(error)) {
-        const data = await listProductsViaRest();
-        productListCache.data = data;
-        productListCache.timestamp = Date.now();
-        return [...data];
-      }
-
-      console.warn('Failed to list products from Firestore, using localStorage fallback.', error);
-    }
-  }
-
-  const localProducts = sortByDateDesc(getLocalList<ProductItem>(STORAGE_KEYS.products));
-  productListCache.data = localProducts;
-  productListCache.timestamp = Date.now();
-  return [...localProducts];
-};
-
-export const createProduct = async (payload: ProductInput): Promise<void> => {
-  if (db) {
-    try {
-      await withTimeout(
-        addDoc(collection(db, 'products'), {
-          ...payload,
-          createdAt: serverTimestamp(),
-        }),
-        FIRESTORE_WRITE_TIMEOUT_MS,
-      );
-      invalidateProductCache();
-      return;
-    } catch (error) {
-      console.warn('Failed to create product in Firestore, saving to localStorage fallback.', error);
-    }
-  }
-
-  const products = getLocalList<ProductItem>(STORAGE_KEYS.products);
-  products.push({
-    id: crypto.randomUUID(),
-    ...payload,
-    createdAt: new Date().toISOString(),
-  });
-  setLocalList(STORAGE_KEYS.products, products);
-  invalidateProductCache();
-};
-
-export const updateProductItem = async (id: string, payload: ProductInput): Promise<void> => {
-  if (db) {
-    try {
-      await withTimeout(updateDoc(doc(db, 'products', id), { ...payload }), FIRESTORE_WRITE_TIMEOUT_MS);
-      invalidateProductCache();
-      return;
-    } catch (error) {
-      console.warn('Failed to update product in Firestore, updating localStorage fallback.', error);
-    }
-  }
-
-  const products = getLocalList<ProductItem>(STORAGE_KEYS.products).map((item) =>
-    item.id === id ? { ...item, ...payload } : item,
-  );
-  setLocalList(STORAGE_KEYS.products, products);
-  invalidateProductCache();
-};
-
-export const deleteProductItem = async (id: string): Promise<void> => {
-  if (db) {
-    try {
-      await withTimeout(deleteDoc(doc(db, 'products', id)), FIRESTORE_WRITE_TIMEOUT_MS);
-      invalidateProductCache();
-      return;
-    } catch (error) {
-      console.warn('Failed to delete product in Firestore, deleting from localStorage fallback.', error);
-    }
-  }
-
-  const products = getLocalList<ProductItem>(STORAGE_KEYS.products).filter((item) => item.id !== id);
-  setLocalList(STORAGE_KEYS.products, products);
-  invalidateProductCache();
-};
-
-export const createGiftEmail = async (email: string): Promise<void> => {
-  if (db) {
-    try {
-      await withTimeout(
-        addDoc(collection(db, 'gifts'), {
-          email,
-          createdAt: serverTimestamp(),
-        }),
-        FIRESTORE_WRITE_TIMEOUT_MS,
-      );
-      invalidateGiftCache();
-      return;
-    } catch (error) {
-      console.warn('Failed to create gift email in Firestore, saving to localStorage fallback.', error);
-    }
-  }
-
-  const gifts = getLocalList<GiftItem>(STORAGE_KEYS.gifts);
-  gifts.push({
-    id: crypto.randomUUID(),
-    email,
-    createdAt: new Date().toISOString(),
-  });
-  setLocalList(STORAGE_KEYS.gifts, gifts);
-  invalidateGiftCache();
-};
-
-export const listGiftEmails = async (): Promise<GiftItem[]> => {
-  if (giftListCache.data && isCacheFresh(giftListCache.timestamp)) {
-    return [...giftListCache.data];
-  }
-
-  if (db) {
-    try {
-      const q = query(collection(db, 'gifts'), limit(FIRESTORE_LIST_LIMIT));
-      const snapshot = await withRetryOnTimeout(() => withTimeout(getDocs(q), FIRESTORE_LIST_TIMEOUT_MS));
-      const data = sortByDateDesc(snapshot.docs.map(mapGiftDoc));
-      giftListCache.data = data;
-      giftListCache.timestamp = Date.now();
-      return [...data];
-    } catch (error) {
-      if (isToMillisError(error)) {
-        const data = await listGiftEmailsViaRest();
-        giftListCache.data = data;
-        giftListCache.timestamp = Date.now();
-        return [...data];
-      }
-
-      console.warn('Failed to list gift emails from Firestore, using localStorage fallback.', error);
-    }
-  }
-
-  const localGifts = sortByDateDesc(getLocalList<GiftItem>(STORAGE_KEYS.gifts));
-  giftListCache.data = localGifts;
-  giftListCache.timestamp = Date.now();
-  return [...localGifts];
-};
-
-export const deleteGiftEmail = async (id: string): Promise<void> => {
-  if (db) {
-    try {
-      await withTimeout(deleteDoc(doc(db, 'gifts', id)), FIRESTORE_WRITE_TIMEOUT_MS);
-      invalidateGiftCache();
-      return;
-    } catch (error) {
-      console.warn('Failed to delete gift email in Firestore, deleting from localStorage fallback.', error);
-    }
-  }
-
-  const gifts = getLocalList<GiftItem>(STORAGE_KEYS.gifts).filter((item) => item.id !== id);
-  setLocalList(STORAGE_KEYS.gifts, gifts);
-  invalidateGiftCache();
-};
+/* ---------- admin auth ---------- */
 
 const ADMIN_KEY = 'bongf_admin_session';
 const ADMIN_EMAIL = import.meta.env.VITE_ADMIN_EMAIL ?? 'admin@abc.com';

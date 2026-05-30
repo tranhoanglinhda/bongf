@@ -1,68 +1,110 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
-import { listProducts } from '../services/repository';
-import type { ProductItem } from '../types/models';
+import { computed, onMounted, ref, watch } from 'vue';
+import { useRoute } from 'vue-router';
+import AppIcon from '../components/AppIcon.vue';
+import AppImage from '../components/AppImage.vue';
+import { listLinks } from '../services/repository';
+import { SHOP_CATEGORIES } from '../utils/shopCategories';
+import type { LinkItem } from '../types/models';
 
-const products = ref<ProductItem[]>([]);
-const loading = ref(true);
-const error = ref('');
-const active = ref<'all' | 'amazon' | 'shopee'>('all');
+const route = useRoute();
+const links = ref<LinkItem[]>([]);
+const active = ref<string>('all');
 
-const toUiErrorMessage = (unknownError: unknown, fallback: string): string => {
-  if (unknownError instanceof Error && unknownError.message.trim()) {
-    return `${fallback} (${unknownError.message})`;
-  }
-  return fallback;
-};
+const visibleCategories = computed(() =>
+  active.value === 'all' ? SHOP_CATEGORIES : SHOP_CATEGORIES.filter((category) => category.id === active.value),
+);
 
-const filteredProducts = computed(() => {
-  if (active.value === 'all') return products.value;
-  return products.value.filter((item) => item.shop === active.value);
+const linksFor = (categoryId: string) => links.value.filter((link) => link.cat === categoryId);
+
+watch(
+  () => route.query.cat,
+  (cat) => {
+    active.value = typeof cat === 'string' && cat ? cat : 'all';
+  },
+  { immediate: true },
+);
+
+onMounted(async () => {
+  links.value = await listLinks();
 });
-
-const loadProducts = async () => {
-  loading.value = true;
-  error.value = '';
-
-  try {
-    products.value = await listProducts();
-  } catch (unknownError) {
-    error.value = toUiErrorMessage(unknownError, 'Failed to load products. Please refresh and try again.');
-  } finally {
-    loading.value = false;
-  }
-};
-
-onMounted(loadProducts);
 </script>
 
 <template>
-  <section class="page-head">
-    <p class="eyebrow">BongF Store</p>
-    <h1>Shop</h1>
-    <p class="lead">Products are organized into two marketplaces: Amazon and Shopee.</p>
-  </section>
+  <div class="fade-in">
+    <div class="profile-head">
+      <AppImage
+        class="avatar"
+        src="https://images.unsplash.com/photo-1594381898411-846e7d193883?auto=format&fit=crop&w=300&q=80"
+        alt="BongF"
+        label="avatar"
+      />
+      <div>
+        <h1>BongF</h1>
+        <p class="handle">@fitnesswithbong</p>
+      </div>
+      <p class="bio">
+        Tất cả sản phẩm mình thực sự dùng & yêu thích cho hành trình tập luyện và ăn uống lành mạnh. Mua qua
+        link để ủng hộ mình nhé 🌿
+      </p>
+      <div class="social-row">
+        <a href="https://instagram.com" target="_blank" rel="noopener noreferrer" aria-label="Instagram"><AppIcon name="ig" /></a>
+        <a href="https://tiktok.com" target="_blank" rel="noopener noreferrer" aria-label="TikTok"><AppIcon name="tiktok" /></a>
+        <a href="https://youtube.com" target="_blank" rel="noopener noreferrer" aria-label="YouTube"><AppIcon name="yt" /></a>
+        <a href="https://facebook.com" target="_blank" rel="noopener noreferrer" aria-label="Facebook"><AppIcon name="fb" /></a>
+      </div>
+    </div>
 
-  <div class="tabs">
-    <button class="tab" :class="{ active: active === 'all' }" @click="active = 'all'">All</button>
-    <button class="tab" :class="{ active: active === 'amazon' }" @click="active = 'amazon'">Amazon Product</button>
-    <button class="tab" :class="{ active: active === 'shopee' }" @click="active = 'shopee'">Shopee Product</button>
-  </div>
+    <div class="chip-row shop-filters">
+      <span class="chip" :class="{ active: active === 'all' }" @click="active = 'all'">Tất cả</span>
+      <span
+        v-for="category in SHOP_CATEGORIES"
+        :key="category.id"
+        class="chip"
+        :class="{ active: active === category.id }"
+        @click="active = category.id"
+      >
+        <span class="ico"><AppIcon :name="category.icon" /></span>{{ category.label }}
+      </span>
+    </div>
 
-  <section v-if="loading" class="state-box">Loading products...</section>
-  <section v-else-if="error" class="state-box">{{ error }}</section>
-  <section v-else-if="filteredProducts.length === 0" class="state-box">No products available in this category.</section>
-
-  <section v-else class="product-grid">
-    <article class="product-card" v-for="item in filteredProducts" :key="item.id">
-      <img :src="item.image" :alt="item.name" class="cover" />
-      <div class="body">
-        <p class="label">{{ item.shop === 'amazon' ? 'Amazon' : 'Shopee' }}</p>
-        <h2>{{ item.name }}</h2>
-        <a :href="item.affiliateUrl" target="_blank" rel="noopener nofollow sponsored" class="btn btn-primary">
-          Buy Now
+    <div v-for="category in visibleCategories" :key="category.id">
+      <div class="cat-head">
+        <span class="ci"><AppIcon :name="category.icon" /></span>
+        <span>
+          <h3>{{ category.label }}</h3>
+          <span class="count">{{ linksFor(category.id).length }} sản phẩm</span>
+        </span>
+      </div>
+      <div class="link-list">
+        <a
+          v-for="link in linksFor(category.id)"
+          :key="link.id"
+          class="link-row"
+          :href="link.affiliateUrl"
+          target="_blank"
+          rel="noopener nofollow sponsored"
+        >
+          <AppImage class="link-thumb" :src="link.thumb" :alt="link.name" label="ảnh" />
+          <div class="link-main">
+            <h4>{{ link.name }}</h4>
+            <p>{{ link.note }}</p>
+            <div class="link-meta">
+              <span class="shop-badge" :class="link.shop">{{ link.shop }}</span>
+              <span class="link-price">{{ link.price }}</span>
+            </div>
+          </div>
+          <span class="link-go"><AppIcon name="arrowUpR" /></span>
         </a>
       </div>
-    </article>
-  </section>
+    </div>
+  </div>
 </template>
+
+<style scoped>
+.shop-filters {
+  justify-content: center;
+  max-width: 660px;
+  margin: 20px auto 0;
+}
+</style>
